@@ -2,19 +2,37 @@
 
 import { useState } from "react";
 
+interface Utterance {
+  speaker_id: string | null;
+  start: number;
+  end: number;
+  text: string;
+  type?: "audio_event";
+}
+
+interface TranscriptionResult {
+  language_code: string;
+  language_probability: number;
+  text: string;
+  utterances: Utterance[];
+  speakers: string[];
+  raw_words_count: number;
+  processing_time_ms: number;
+}
+
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<"idle" | "uploading" | "done" | "error">(
     "idle"
   );
-  const [result, setResult] = useState<string>("");
+  const [result, setResult] = useState<TranscriptionResult | null>(null);
   const [error, setError] = useState<string>("");
 
   const handleSubmit = async () => {
     if (!file) return;
 
     setStatus("uploading");
-    setResult("");
+    setResult(null);
     setError("");
 
     try {
@@ -32,7 +50,7 @@ export default function Home() {
         throw new Error(data.error || `HTTP ${response.status}`);
       }
 
-      setResult(JSON.stringify(data, null, 2));
+      setResult(data);
       setStatus("done");
     } catch (err) {
       const message =
@@ -78,18 +96,32 @@ export default function Home() {
       )}
 
       {result && (
-        <pre
-          style={{
-            marginTop: "1rem",
-            padding: "1rem",
-            background: "#f5f5f5",
-            overflow: "auto",
-            maxHeight: "80vh",
-            fontSize: "0.875rem",
-          }}
-        >
-          {result}
-        </pre>
+        <div style={{ marginTop: "1rem" }}>
+          <p>
+            話者数: {result.speakers.length} / 発言ブロック数: {result.utterances.length} / 処理時間: {(result.processing_time_ms / 1000).toFixed(1)}秒
+          </p>
+          <div style={{ marginTop: "1rem" }}>
+            {result.utterances.map((u, i) => (
+              <div key={i} style={{ marginBottom: "0.5rem" }}>
+                <strong>{u.speaker_id || "[event]"}:</strong> {u.text}
+              </div>
+            ))}
+          </div>
+          <details style={{ marginTop: "1rem" }}>
+            <summary>生JSON</summary>
+            <pre
+              style={{
+                padding: "1rem",
+                background: "#f5f5f5",
+                overflow: "auto",
+                maxHeight: "60vh",
+                fontSize: "0.875rem",
+              }}
+            >
+              {JSON.stringify(result, null, 2)}
+            </pre>
+          </details>
+        </div>
       )}
     </div>
   );
