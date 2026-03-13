@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { transcribeWithElevenLabs, formatTranscription } from "@/lib/transcription";
 
@@ -76,6 +78,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
 
+    // セッションからユーザーID取得
+    const session = await getServerSession(authOptions);
+    const userId = (session?.user as Record<string, unknown>)?.id as string | undefined;
+
     // DBレコード作成
     const transcription = await prisma.transcription.create({
       data: {
@@ -83,6 +89,7 @@ export async function POST(request: NextRequest) {
         status: "uploading",
         originalFilename: file.name,
         fileSize: file.size,
+        userId: userId ?? null,
       },
     });
 

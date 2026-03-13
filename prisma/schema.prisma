@@ -7,6 +7,15 @@ datasource db {
   provider = "postgresql"
 }
 
+model User {
+  id             String          @id @default(uuid())
+  email          String          @unique
+  passwordHash   String
+  name           String
+  createdAt      DateTime        @default(now())
+  transcriptions Transcription[]
+}
+
 model Transcription {
   id               String   @id @default(uuid())
   title            String
@@ -23,6 +32,8 @@ model Transcription {
   speakerMapping   Json?    // 話者名マッピング（Phase 4で使用）
   errorMessage     String?  // エラー時のメッセージ
   processingTimeMs Int?     // ElevenLabs APIの処理時間（ミリ秒）
+  userId           String?  // nullable for backward compatibility
+  user             User?    @relation(fields: [userId], references: [id])
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }
