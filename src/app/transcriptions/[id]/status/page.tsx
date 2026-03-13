@@ -12,12 +12,12 @@ export default function StatusPage() {
   const [title, setTitle] = useState<string>("");
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [estimatedSeconds, setEstimatedSeconds] = useState<number | null>(null);
 
-  // ファイルサイズからの推定時間（MB × 2秒）
-  // ファイルサイズが不明な場合は120秒
-  const [estimatedSeconds] = useState(120);
-
-  const remainingSeconds = Math.max(0, estimatedSeconds - elapsedSeconds);
+  const remainingSeconds =
+    estimatedSeconds !== null
+      ? Math.max(0, estimatedSeconds - elapsedSeconds)
+      : null;
 
   const poll = useCallback(async () => {
     try {
@@ -25,6 +25,12 @@ export default function StatusPage() {
       const data = await res.json();
       setStatus(data.status);
       if (data.title) setTitle(data.title);
+
+      // fileSizeからカウントダウン秒数を算出
+      if (data.fileSize && estimatedSeconds === null) {
+        const fileSizeMB = Math.ceil(data.fileSize / 1024 / 1024);
+        setEstimatedSeconds(fileSizeMB * 2);
+      }
 
       if (data.status === "completed") {
         router.push(`/transcriptions/${id}`);
@@ -34,7 +40,7 @@ export default function StatusPage() {
     } catch {
       // ネットワークエラーは無視して次のポーリングを待つ
     }
-  }, [id, router]);
+  }, [id, router, estimatedSeconds]);
 
   // ポーリング（3秒ごと）
   useEffect(() => {
@@ -57,10 +63,10 @@ export default function StatusPage() {
     return `${m}:${s.toString().padStart(2, "0")}`;
   };
 
-  const progressPercent = Math.min(
-    95,
-    (elapsedSeconds / estimatedSeconds) * 100
-  );
+  const progressPercent =
+    estimatedSeconds !== null
+      ? Math.min(95, (elapsedSeconds / estimatedSeconds) * 100)
+      : Math.min(95, elapsedSeconds * 0.5); // fallback: ゆっくり進む
 
   if (status === "error") {
     return (
@@ -99,12 +105,14 @@ export default function StatusPage() {
 
           {/* カウントダウン */}
           <div className="text-center">
-            {remainingSeconds > 0 ? (
+            {remainingSeconds !== null && remainingSeconds > 0 ? (
               <p className="text-lg">
                 推定残り時間: <span className="font-bold">{formatTime(remainingSeconds)}</span>
               </p>
-            ) : (
+            ) : remainingSeconds !== null && remainingSeconds === 0 ? (
               <p className="text-lg">まもなく完了します...</p>
+            ) : (
+              <p className="text-lg">処理中...</p>
             )}
             <p className="text-sm text-gray-500 mt-1">
               経過時間: {formatTime(elapsedSeconds)}

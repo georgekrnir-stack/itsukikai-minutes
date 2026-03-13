@@ -13,6 +13,7 @@ export async function GET(
       id: true,
       status: true,
       title: true,
+      fileSize: true,
       errorMessage: true,
     },
   });

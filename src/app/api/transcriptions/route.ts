@@ -100,6 +100,7 @@ export async function POST(request: NextRequest) {
     const response = NextResponse.json({
       id: transcription.id,
       status: "uploading",
+      fileSize: file.size,
     });
 
     // バックグラウンド処理（awaitしない）
