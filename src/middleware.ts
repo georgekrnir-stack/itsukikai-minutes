@@ -7,7 +7,8 @@ export default withAuth({
 });
 
 export const config = {
+  // /login, /api/*, 静的ファイルを除外（APIはルート内で認証チェック）
   matcher: [
-    "/((?!login|api/auth|_next/static|_next/image|favicon.ico).*)",
+    "/((?!login|api|_next/static|_next/image|favicon.ico).*)",
   ],
 };

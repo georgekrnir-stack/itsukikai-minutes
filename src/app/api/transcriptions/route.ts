@@ -70,6 +70,12 @@ async function processTranscription(id: string, tempFilePath: string) {
 
 export async function POST(request: NextRequest) {
   try {
+    // 認証チェック
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const formData = await request.formData();
     const file = formData.get("file");
     const title = formData.get("title") as string || "無題の会議";
@@ -78,9 +84,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
 
-    // セッションからユーザーID取得
-    const session = await getServerSession(authOptions);
-    const userId = (session?.user as Record<string, unknown>)?.id as string | undefined;
+    const userId = (session.user as Record<string, unknown>)?.id as string | undefined;
 
     // DBレコード作成
     const transcription = await prisma.transcription.create({
