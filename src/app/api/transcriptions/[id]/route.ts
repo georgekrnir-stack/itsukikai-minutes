@@ -39,18 +39,42 @@ export async function PATCH(
 
   const transcription = await prisma.transcription.findUnique({
     where: { id },
+    include: { minutes: true },
   });
 
   if (!transcription) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  const oldMapping = transcription.speakerMapping as Record<string, string> | null;
+  const newMapping = body.speakerMapping as Record<string, string> | undefined;
+
   const updated = await prisma.transcription.update({
     where: { id },
     data: {
-      speakerMapping: body.speakerMapping ?? undefined,
+      speakerMapping: newMapping ?? undefined,
     },
   });
+
+  // 議事録が存在する場合、テキスト内の話者名を置換
+  if (transcription.minutes && newMapping) {
+    let updatedContent = transcription.minutes.content;
+
+    for (const [speakerId, newName] of Object.entries(newMapping)) {
+      const oldName = oldMapping?.[speakerId] || speakerId;
+      if (oldName !== newName && newName.trim() !== "") {
+        updatedContent = updatedContent.split(oldName).join(newName);
+      }
+    }
+
+    if (updatedContent !== transcription.minutes.content) {
+      await prisma.minutes.update({
+        where: { id: transcription.minutes.id },
+        data: { content: updatedContent },
+      });
+      console.log(`[speaker-mapping] ${id}: Minutes content updated with new speaker names`);
+    }
+  }
 
   return NextResponse.json(updated);
 }
