@@ -10,9 +10,9 @@
   },
   "dependencies": {
     "@elevenlabs/elevenlabs-js": "^2.39.0",
-    "@prisma/client": "6.19.2",
+    "@prisma/client": "^6.19.2",
     "next": "16.1.6",
-    "prisma": "6.19.2",
+    "prisma": "^6.19.2",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },
