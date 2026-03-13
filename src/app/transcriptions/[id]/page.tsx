@@ -42,6 +42,7 @@ const SPEAKER_COLORS = [
 
 function getSpeakerColor(speakerId: string, speakers: string[]) {
   const index = speakers.indexOf(speakerId);
+  if (index < 0) return SPEAKER_COLORS[0];
   return SPEAKER_COLORS[index % SPEAKER_COLORS.length];
 }
 
