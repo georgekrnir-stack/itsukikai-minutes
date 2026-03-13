@@ -1,30 +1,27 @@
-export interface Utterance {
-  speaker_id: string | null;
-  start: number;
-  end: number;
-  text: string;
-  type?: "audio_event";
-}
+import { ElevenLabsResponse, FormattedTranscription, Utterance } from "./types";
 
-export interface FormattedTranscription {
-  language_code: string;
-  language_probability: number;
-  text: string;
-  utterances: Utterance[];
-  speakers: string[];
-  raw_words_count: number;
-  processing_time_ms: number;
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function formatTranscription(apiResponse: any, processingTimeMs: number): FormattedTranscription {
+/**
+ * ElevenLabs APIの生レスポンスを、話者ごとの発言ブロックに整形する
+ * 日本語の場合、APIは1文字単位でデータを返すため、
+ * 同一話者の連続する文字を結合して1つの発言ブロックにまとめる
+ *
+ * @param apiResponse ElevenLabs APIの生レスポンス
+ * @param processingTimeMs API処理時間（ミリ秒）
+ * @returns 整形済み文字起こし結果
+ */
+export function formatTranscription(
+  apiResponse: ElevenLabsResponse,
+  processingTimeMs: number
+): FormattedTranscription {
   const words = apiResponse.words || [];
   const utterances: Utterance[] = [];
   let currentUtterance: Utterance | null = null;
 
   for (const word of words) {
+    // spacingはスキップ
     if (word.type === "spacing") continue;
 
+    // audio_eventは独立ブロック
     if (word.type === "audio_event") {
       if (currentUtterance) {
         utterances.push(currentUtterance);
@@ -40,9 +37,11 @@ export function formatTranscription(apiResponse: any, processingTimeMs: number):
       continue;
     }
 
+    // wordの処理
     const speakerId = word.speakerId || word.speaker_id || null;
 
     if (!currentUtterance || currentUtterance.speaker_id !== speakerId) {
+      // 話者が変わった → 現在のブロック確定、新ブロック開始
       if (currentUtterance) {
         utterances.push(currentUtterance);
       }
@@ -53,15 +52,18 @@ export function formatTranscription(apiResponse: any, processingTimeMs: number):
         text: word.text,
       };
     } else {
+      // 同じ話者 → テキスト結合、end更新
       currentUtterance.text += word.text;
       currentUtterance.end = word.end;
     }
   }
 
+  // 最後のブロック
   if (currentUtterance) {
     utterances.push(currentUtterance);
   }
 
+  // ユニークな話者リスト
   const speakers = [
     ...new Set(
       utterances
@@ -71,8 +73,8 @@ export function formatTranscription(apiResponse: any, processingTimeMs: number):
   ];
 
   return {
-    language_code: apiResponse.language_code || apiResponse.languageCode,
-    language_probability: apiResponse.language_probability || apiResponse.languageProbability,
+    language_code: apiResponse.language_code,
+    language_probability: apiResponse.language_probability,
     text: apiResponse.text,
     utterances,
     speakers,

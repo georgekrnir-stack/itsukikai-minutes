@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
 import fs from "fs";
 import path from "path";
 import os from "os";
 import { prisma } from "@/lib/prisma";
-import { formatTranscription } from "@/lib/format-transcription";
+import { transcribeWithElevenLabs, formatTranscription } from "@/lib/transcription";
 
 export const maxDuration = 600;
 
@@ -17,19 +16,12 @@ async function processTranscription(id: string, tempFilePath: string) {
     });
     console.log(`[transcription] ${id}: Status changed to transcribing`);
 
-    const client = new ElevenLabsClient({
-      apiKey: process.env.ELEVENLABS_API_KEY,
-    });
-
     const startTime = Date.now();
 
-    const apiResponse = await client.speechToText.convert({
-      file: fs.createReadStream(tempFilePath),
-      modelId: "scribe_v2",
+    const apiResponse = await transcribeWithElevenLabs(tempFilePath, {
+      apiKey: process.env.ELEVENLABS_API_KEY!,
       languageCode: "jpn",
-      tagAudioEvents: true,
       diarize: true,
-      timestampsGranularity: "word",
     });
 
     const elapsed = Date.now() - startTime;
