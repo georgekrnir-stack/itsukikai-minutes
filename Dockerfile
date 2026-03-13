@@ -23,7 +23,8 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 COPY --from=builder /app/src/generated ./src/generated
+COPY --from=builder /app/scripts ./scripts
 
 EXPOSE 8080
 
-CMD ["sh", "-c", "npx prisma db push --accept-data-loss && npm start"]
+CMD ["sh", "-c", "npx prisma db push --accept-data-loss && npx tsx scripts/seed-user.ts admin@itsukikai.jp password123 管理者 && npm start"]
