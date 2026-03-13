@@ -49,7 +49,7 @@ export default function Home() {
       <div style={{ marginTop: "1rem" }}>
         <input
           type="file"
-          accept=".m4a,.mp3,.wav,.mp4,.webm"
+          accept=".m4a,.mp3,.wav,.aac,.ogg,.flac,.wma,.mp4,.webm"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
         />
       </div>
