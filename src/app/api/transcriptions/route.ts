@@ -6,6 +6,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { transcribeWithElevenLabs, formatTranscription } from "@/lib/transcription";
+import { correctTranscription } from "@/lib/llm/correct";
 
 export const maxDuration = 600;
 
@@ -42,11 +43,10 @@ async function processTranscription(id: string, tempFilePath: string, keyterms?:
     const lastUtterance = formatted.utterances[formatted.utterances.length - 1];
     const durationSeconds = lastUtterance ? Math.ceil(lastUtterance.end) : null;
 
-    // DB更新
+    // DB更新（文字起こし完了、清書前）
     await prisma.transcription.update({
       where: { id },
       data: {
-        status: "completed",
         languageCode: formatted.language_code,
         transcriptText: formatted.text,
         utterances: JSON.parse(JSON.stringify(formatted.utterances)),
@@ -57,7 +57,10 @@ async function processTranscription(id: string, tempFilePath: string, keyterms?:
         processingTimeMs: elapsed,
       },
     });
-    console.log(`[transcription] ${id}: Status changed to completed`);
+    console.log(`[transcription] ${id}: Transcription saved, starting correction`);
+
+    // LLM清書を自動実行
+    await correctTranscription(id);
   } catch (error) {
     console.error(`[transcription] ${id}: Error -`, error);
     const message = error instanceof Error ? error.message : "Unknown error";

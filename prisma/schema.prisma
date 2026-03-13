@@ -29,7 +29,7 @@ model CustomDictionary {
 model Transcription {
   id               String   @id @default(uuid())
   title            String
-  status           String   @default("uploading") // uploading | transcribing | completed | error
+  status           String   @default("uploading") // uploading | transcribing | correcting | completed | error
   originalFilename String
   fileSize         Int      // バイト数
   durationSeconds  Int?     // 音声の長さ（秒）。完了後に設定
@@ -40,10 +40,23 @@ model Transcription {
   utterances       Json?    // 整形済みutterances配列（JSON）
   speakers         Json?    // 話者IDリスト（JSON配列）
   speakerMapping   Json?    // 話者名マッピング（Phase 4で使用）
+  correctedUtterances Json?    // 清書後のutterances（変更履歴付き）
+  correctionSummary   String?  // 清書の要約
   errorMessage     String?  // エラー時のメッセージ
   processingTimeMs Int?     // ElevenLabs APIの処理時間（ミリ秒）
   userId           String?  // nullable for backward compatibility
   user             User?    @relation(fields: [userId], references: [id])
+  minutes          Minutes?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+}
+
+model Minutes {
+  id              String        @id @default(uuid())
+  transcriptionId String        @unique
+  transcription   Transcription @relation(fields: [transcriptionId], references: [id])
+  content         String
+  isEdited        Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 }
