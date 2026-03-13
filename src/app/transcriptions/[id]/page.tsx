@@ -343,7 +343,7 @@ export default function TranscriptionPage() {
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-gray-400 font-mono">[{formatTimestamp(u.start)}]</span>
-                      <span className="text-sm font-semibold" style={{ color: color.text }}>
+                      <span className="text-sm font-semibold" style={{ color: "#111827" }}>
                         {u.type === "audio_event" ? "[event]" : label}
                       </span>
                     </div>
