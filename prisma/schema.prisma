@@ -1,0 +1,27 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Transcription {
+  id               String   @id @default(uuid())
+  title            String
+  status           String   @default("uploading") // uploading | transcribing | completed | error
+  originalFilename String
+  fileSize         Int      // バイト数
+  durationSeconds  Int?     // 音声の長さ（秒）。完了後に設定
+  speakerCount     Int?     // 検出された話者数。完了後に設定
+  utteranceCount   Int?     // 発言ブロック数。完了後に設定
+  languageCode     String?  // 検出された言語コード
+  transcriptText   String?  // 全体のプレーンテキスト（APIのtextフィールド）
+  utterances       Json?    // 整形済みutterances配列（JSON）
+  speakers         Json?    // 話者IDリスト（JSON配列）
+  speakerMapping   Json?    // 話者名マッピング（Phase 4で使用）
+  errorMessage     String?  // エラー時のメッセージ
+  processingTimeMs Int?     // ElevenLabs APIの処理時間（ミリ秒）
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}

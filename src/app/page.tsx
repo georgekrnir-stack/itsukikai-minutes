@@ -1,45 +1,27 @@
 "use client";
 
 import { useState } from "react";
-
-interface Utterance {
-  speaker_id: string | null;
-  start: number;
-  end: number;
-  text: string;
-  type?: "audio_event";
-}
-
-interface TranscriptionResult {
-  language_code: string;
-  language_probability: number;
-  text: string;
-  utterances: Utterance[];
-  speakers: string[];
-  raw_words_count: number;
-  processing_time_ms: number;
-}
+import { useRouter } from "next/navigation";
 
 export default function Home() {
+  const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
-  const [status, setStatus] = useState<"idle" | "uploading" | "done" | "error">(
-    "idle"
-  );
-  const [result, setResult] = useState<TranscriptionResult | null>(null);
-  const [error, setError] = useState<string>("");
+  const [title, setTitle] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
 
   const handleSubmit = async () => {
     if (!file) return;
 
-    setStatus("uploading");
-    setResult(null);
+    setUploading(true);
     setError("");
 
     try {
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("title", title || "無題の会議");
 
-      const response = await fetch("/api/transcribe", {
+      const response = await fetch("/api/transcriptions", {
         method: "POST",
         body: formData,
       });
@@ -50,79 +32,61 @@ export default function Home() {
         throw new Error(data.error || `HTTP ${response.status}`);
       }
 
-      setResult(data);
-      setStatus("done");
+      router.push(`/transcriptions/${data.id}/status`);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Unknown error occurred";
       setError(message);
-      setStatus("error");
+      setUploading(false);
     }
   };
 
   return (
-    <div style={{ padding: "2rem", fontFamily: "sans-serif" }}>
-      <h1>文字起こし（Phase 1）</h1>
+    <div className="min-h-screen bg-gray-50 p-8">
+      <div className="mx-auto max-w-2xl">
+        <h1 className="text-2xl font-bold mb-6">文字起こし</h1>
 
-      <div style={{ marginTop: "1rem" }}>
-        <input
-          type="file"
-          accept=".m4a,.mp3,.wav,.aac,.ogg,.flac,.wma,.mp4,.webm"
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-        />
-      </div>
-
-      <div style={{ marginTop: "1rem" }}>
-        <button
-          onClick={handleSubmit}
-          disabled={!file || status === "uploading"}
-          style={{
-            padding: "0.5rem 1rem",
-            cursor: file && status !== "uploading" ? "pointer" : "not-allowed",
-          }}
-        >
-          {status === "uploading" ? "処理中..." : "文字起こし開始"}
-        </button>
-      </div>
-
-      {status === "uploading" && (
-        <p style={{ marginTop: "1rem" }}>
-          処理中...（長い音声ファイルの場合、数分かかることがあります）
-        </p>
-      )}
-
-      {error && (
-        <p style={{ marginTop: "1rem", color: "red" }}>エラー: {error}</p>
-      )}
-
-      {result && (
-        <div style={{ marginTop: "1rem" }}>
-          <p>
-            話者数: {result.speakers.length} / 発言ブロック数: {result.utterances.length} / 処理時間: {(result.processing_time_ms / 1000).toFixed(1)}秒
-          </p>
-          <div style={{ marginTop: "1rem" }}>
-            {result.utterances.map((u, i) => (
-              <div key={i} style={{ marginBottom: "0.5rem" }}>
-                <strong>{u.speaker_id || "[event]"}:</strong> {u.text}
-              </div>
-            ))}
+        <div className="bg-white rounded-lg shadow p-6 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              会議タイトル
+            </label>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="例: 2024年3月 経営会議"
+              className="w-full border border-gray-300 rounded px-3 py-2"
+            />
           </div>
-          <details style={{ marginTop: "1rem" }}>
-            <summary>生JSON</summary>
-            <pre
-              style={{
-                padding: "1rem",
-                background: "#f5f5f5",
-                overflow: "auto",
-                maxHeight: "60vh",
-                fontSize: "0.875rem",
-              }}
-            >
-              {JSON.stringify(result, null, 2)}
-            </pre>
-          </details>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              音声ファイル
+            </label>
+            <input
+              type="file"
+              accept=".m4a,.mp3,.wav,.aac,.ogg,.flac,.wma,.mp4,.webm"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
+            {file && (
+              <p className="text-sm text-gray-500 mt-1">
+                {file.name} ({(file.size / 1024 / 1024).toFixed(1)} MB)
+              </p>
+            )}
+          </div>
+
+          <button
+            onClick={handleSubmit}
+            disabled={!file || uploading}
+            className="w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+          >
+            {uploading ? "アップロード中..." : "文字起こし開始"}
+          </button>
+
+          {error && <p className="text-red-600 text-sm">エラー: {error}</p>}
         </div>
-      )}
+      </div>
     </div>
   );
 }
