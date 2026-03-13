@@ -9,7 +9,7 @@ import { transcribeWithElevenLabs, formatTranscription } from "@/lib/transcripti
 
 export const maxDuration = 600;
 
-async function processTranscription(id: string, tempFilePath: string) {
+async function processTranscription(id: string, tempFilePath: string, keyterms?: string[]) {
   try {
     // status → transcribing
     await prisma.transcription.update({
@@ -24,7 +24,12 @@ async function processTranscription(id: string, tempFilePath: string) {
       apiKey: process.env.ELEVENLABS_API_KEY!,
       languageCode: "jpn",
       diarize: true,
+      keyterms,
     });
+
+    if (keyterms?.length) {
+      console.log(`[transcription] ${id}: Keyterms sent: ${keyterms.join(", ")}`);
+    }
 
     const elapsed = Date.now() - startTime;
     console.log(`[transcription] ${id}: ElevenLabs API completed in ${elapsed}ms`);
@@ -79,6 +84,7 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const file = formData.get("file");
     const title = formData.get("title") as string || "無題の会議";
+    const useKeyterms = formData.get("useKeyterms") === "true";
 
     if (!file || !(file instanceof File)) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
@@ -114,8 +120,20 @@ export async function POST(request: NextRequest) {
       fileSize: file.size,
     });
 
+    // Keyterm取得
+    let keyterms: string[] | undefined;
+    if (useKeyterms) {
+      const keytermEntries = await prisma.customDictionary.findMany({
+        where: { isKeyterm: true },
+        select: { correctTerm: true },
+        take: 100,
+      });
+      keyterms = keytermEntries.map((e) => e.correctTerm);
+      console.log(`[transcription] ${transcription.id}: Keyterms enabled, ${keyterms.length} terms`);
+    }
+
     // バックグラウンド処理（awaitしない）
-    processTranscription(transcription.id, tempFilePath).catch((error) => {
+    processTranscription(transcription.id, tempFilePath, keyterms).catch((error) => {
       console.error(`[transcription] Background processing error:`, error);
     });
 

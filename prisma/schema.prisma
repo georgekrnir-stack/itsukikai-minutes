@@ -16,6 +16,16 @@ model User {
   transcriptions Transcription[]
 }
 
+model CustomDictionary {
+  id            String   @id @default(uuid())
+  correctTerm   String
+  incorrectTerm String
+  category      String
+  isKeyterm     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
 model Transcription {
   id               String   @id @default(uuid())
   title            String
