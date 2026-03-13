@@ -169,6 +169,12 @@ export default function TranscriptionPage() {
       });
       if (!res.ok) throw new Error("保存に失敗しました");
       setData((prev) => (prev ? { ...prev, speakerMapping } : prev));
+      // 議事録が存在する場合、更新された内容を再取得
+      const minutesRes = await fetch(`/api/transcriptions/${id}/minutes`);
+      if (minutesRes.ok) {
+        const updatedMinutes = await minutesRes.json();
+        setMinutes(updatedMinutes);
+      }
       setMappingSaved(true);
       setTimeout(() => setMappingSaved(false), 2000);
     } catch (err) {

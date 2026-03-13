@@ -39,7 +39,6 @@ export async function PATCH(
 
   const transcription = await prisma.transcription.findUnique({
     where: { id },
-    include: { minutes: true },
   });
 
   if (!transcription) {
@@ -57,22 +56,28 @@ export async function PATCH(
   });
 
   // 議事録が存在する場合、テキスト内の話者名を置換
-  if (transcription.minutes && newMapping) {
-    let updatedContent = transcription.minutes.content;
+  if (newMapping) {
+    const existingMinutes = await prisma.minutes.findUnique({
+      where: { transcriptionId: id },
+    });
 
-    for (const [speakerId, newName] of Object.entries(newMapping)) {
-      const oldName = oldMapping?.[speakerId] || speakerId;
-      if (oldName !== newName && newName.trim() !== "") {
-        updatedContent = updatedContent.split(oldName).join(newName);
+    if (existingMinutes) {
+      let updatedContent = existingMinutes.content;
+
+      for (const [speakerId, newName] of Object.entries(newMapping)) {
+        const oldName = oldMapping?.[speakerId] || speakerId;
+        if (oldName !== newName && newName.trim() !== "") {
+          updatedContent = updatedContent.split(oldName).join(newName);
+        }
       }
-    }
 
-    if (updatedContent !== transcription.minutes.content) {
-      await prisma.minutes.update({
-        where: { id: transcription.minutes.id },
-        data: { content: updatedContent },
-      });
-      console.log(`[speaker-mapping] ${id}: Minutes content updated with new speaker names`);
+      if (updatedContent !== existingMinutes.content) {
+        await prisma.minutes.update({
+          where: { transcriptionId: id },
+          data: { content: updatedContent },
+        });
+        console.log(`[speaker-mapping] ${id}: Minutes content updated with new speaker names`);
+      }
     }
   }
 
