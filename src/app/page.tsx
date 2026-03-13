@@ -8,55 +8,41 @@ export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [useKeyterms, setUseKeyterms] = useState(false);
   const [error, setError] = useState("");
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!file) return;
 
     setUploading(true);
-    setUploadProgress(0);
     setError("");
 
-    const xhr = new XMLHttpRequest();
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("title", title || "無題の会議");
-    if (useKeyterms) {
-      formData.append("useKeyterms", "true");
-    }
-
-    xhr.upload.addEventListener("progress", (e) => {
-      if (e.lengthComputable) {
-        setUploadProgress(Math.round((e.loaded / e.total) * 100));
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("title", title || "無題の会議");
+      if (useKeyterms) {
+        formData.append("useKeyterms", "true");
       }
-    });
 
-    xhr.addEventListener("load", () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        const data = JSON.parse(xhr.responseText);
-        router.push(`/transcriptions/${data.id}/status`);
-      } else {
-        try {
-          const data = JSON.parse(xhr.responseText);
-          setError(data.error || `HTTP ${xhr.status}`);
-        } catch {
-          setError(`HTTP ${xhr.status}`);
-        }
-        setUploading(false);
-        setUploadProgress(null);
+      const response = await fetch("/api/transcriptions", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || `HTTP ${response.status}`);
       }
-    });
 
-    xhr.addEventListener("error", () => {
-      setError("アップロードに失敗しました");
+      router.push(`/transcriptions/${data.id}/status`);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Unknown error occurred";
+      setError(message);
       setUploading(false);
-      setUploadProgress(null);
-    });
-
-    xhr.open("POST", "/api/transcriptions");
-    xhr.send(formData);
+    }
   };
 
   return (
@@ -111,18 +97,11 @@ export default function Home() {
             </label>
           </div>
 
-          {/* アップロードプログレス */}
-          {uploadProgress !== null && (
-            <div>
-              <p className="text-sm text-gray-600 mb-1">
-                アップロード中... {uploadProgress}%
-              </p>
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div
-                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${uploadProgress}%` }}
-                />
-              </div>
+          {/* アップロード中スピナー */}
+          {uploading && (
+            <div className="flex items-center gap-3 py-2">
+              <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+              <span className="text-sm text-gray-600">アップロード中...</span>
             </div>
           )}
 
