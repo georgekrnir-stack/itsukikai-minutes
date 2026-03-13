@@ -47,6 +47,7 @@ export async function POST(request: NextRequest) {
       languageCode: "jpn",
       tagAudioEvents: true,
       diarize: true,
+      timestampsGranularity: "word",
     });
 
     const elapsed = Date.now() - startTime;
