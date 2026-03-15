@@ -68,7 +68,7 @@ async function callWithRetry(
   throw new Error("Max retries exceeded");
 }
 
-export async function correctTranscription(transcriptionId: string): Promise<void> {
+export async function correctTranscription(transcriptionId: string, finalStatus: string = "completed"): Promise<void> {
   console.log(`[correct] ${transcriptionId}: Starting LLM correction`);
 
   const transcription = await prisma.transcription.findUnique({
@@ -191,7 +191,7 @@ export async function correctTranscription(transcriptionId: string): Promise<voi
       data: {
         correctedUtterances: JSON.parse(JSON.stringify(allCorrected)),
         correctionSummary: summary,
-        status: "completed",
+        status: finalStatus,
       },
     });
   } catch (error) {
@@ -199,7 +199,7 @@ export async function correctTranscription(transcriptionId: string): Promise<voi
     await prisma.transcription.update({
       where: { id: transcriptionId },
       data: {
-        status: "completed",
+        status: finalStatus,
         correctionSummary: "清書処理でエラーが発生しました",
       },
     });

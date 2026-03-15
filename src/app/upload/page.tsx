@@ -18,7 +18,6 @@ export default function UploadPage() {
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("経営会議");
   const [uploading, setUploading] = useState(false);
-  const [useKeyterms, setUseKeyterms] = useState(false);
   const [error, setError] = useState("");
 
   const handleSubmit = async () => {
@@ -32,9 +31,7 @@ export default function UploadPage() {
       formData.append("file", file);
       formData.append("title", title || "無題の会議");
       formData.append("category", category);
-      if (useKeyterms) {
-        formData.append("useKeyterms", "true");
-      }
+      formData.append("useKeyterms", "true");
 
       const response = await fetch("/api/transcriptions", {
         method: "POST",
@@ -107,21 +104,6 @@ export default function UploadPage() {
                 {file.name} ({(file.size / 1024 / 1024).toFixed(1)} MB)
               </p>
             )}
-          </div>
-
-          <div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={useKeyterms}
-                onChange={(e) => setUseKeyterms(e.target.checked)}
-                disabled={uploading}
-                className="w-4 h-4"
-              />
-              <span className="text-sm text-gray-700">
-                Keyterm Promptingを使用する（固有名詞の認識精度が向上しますが、コストが20%増加します）
-              </span>
-            </label>
           </div>
 
           {uploading && (

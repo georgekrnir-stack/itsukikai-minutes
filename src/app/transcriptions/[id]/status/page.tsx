@@ -7,13 +7,35 @@ const STEPS = [
   { key: "uploading", label: "アップロード" },
   { key: "transcribing", label: "文字起こし" },
   { key: "correcting", label: "テキスト清書" },
+  { key: "analyzing", label: "話者分析" },
 ];
 
 function getStepIndex(status: string): number {
   if (status === "uploading") return 0;
   if (status === "transcribing") return 1;
   if (status === "correcting") return 2;
-  return 3; // completed
+  if (status === "analyzing") return 3;
+  return 4; // completed
+}
+
+// ファイルサイズ(bytes)から推定処理時間(秒)を計算
+// 実績ベース: 10MB音声 → 文字起こし~60s, 清書~90s, 話者分析~20s
+function estimateTotalSeconds(fileSizeBytes: number): number {
+  const sizeMB = fileSizeBytes / (1024 * 1024);
+  // 文字起こし: 音声1分あたり~6秒、m4aは約1MB/分
+  const transcribeTime = Math.max(30, sizeMB * 6);
+  // 清書: 音声長に比例するが最低60秒
+  const correctTime = Math.max(60, sizeMB * 8);
+  // 話者分析: 比較的固定（大きいファイルでも30秒程度）
+  const analyzeTime = 30;
+  return Math.ceil(transcribeTime + correctTime + analyzeTime);
+}
+
+// ステップごとの進捗割合
+function getStepProgress(stepIndex: number): number {
+  // transcribing=0~35%, correcting=35~80%, analyzing=80~100%
+  const boundaries = [0, 0.05, 0.35, 0.80, 1.0];
+  return boundaries[stepIndex] || 0;
 }
 
 export default function StatusPage() {
@@ -25,6 +47,7 @@ export default function StatusPage() {
   const [title, setTitle] = useState<string>("");
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [fileSize, setFileSize] = useState<number>(0);
 
   const poll = useCallback(async () => {
     try {
@@ -32,6 +55,7 @@ export default function StatusPage() {
       const data = await res.json();
       setStatus(data.status);
       if (data.title) setTitle(data.title);
+      if (data.fileSize) setFileSize(data.fileSize);
 
       if (data.status === "completed") {
         router.push(`/transcriptions/${id}`);
@@ -63,6 +87,8 @@ export default function StatusPage() {
   };
 
   const currentStep = getStepIndex(status);
+  const estimatedTotal = fileSize > 0 ? estimateTotalSeconds(fileSize) : 0;
+  const estimatedRemaining = Math.max(0, estimatedTotal - elapsedSeconds);
 
   if (status === "error") {
     return (
@@ -84,6 +110,16 @@ export default function StatusPage() {
     );
   }
 
+  // プログレスバー計算
+  const stepStart = getStepProgress(currentStep);
+  const stepEnd = getStepProgress(currentStep + 1);
+  const stepRange = stepEnd - stepStart;
+  // ステップ内での経過を推定（ステップの所要時間に対する経過割合）
+  const stepEstimate = estimatedTotal > 0
+    ? Math.min(1, (elapsedSeconds - estimatedTotal * stepStart) / (estimatedTotal * stepRange))
+    : 0.5;
+  const progressPercent = Math.min(99, Math.round((stepStart + stepRange * Math.max(0, stepEstimate)) * 100));
+
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="mx-auto max-w-2xl">
@@ -91,6 +127,22 @@ export default function StatusPage() {
         {title && <p className="text-gray-600 mb-6">{title}</p>}
 
         <div className="bg-white rounded-lg shadow p-6 space-y-6">
+          {/* プログレスバー */}
+          <div>
+            <div className="flex justify-between text-xs text-gray-500 mb-1">
+              <span>{progressPercent}%</span>
+              {estimatedTotal > 0 && estimatedRemaining > 0 && (
+                <span>残り約{Math.ceil(estimatedRemaining / 60)}分</span>
+              )}
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div
+                className="bg-blue-600 h-2 rounded-full transition-all duration-1000"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+          </div>
+
           {/* ステップ表示 */}
           <div className="space-y-3">
             {STEPS.map((step, i) => {
@@ -123,9 +175,16 @@ export default function StatusPage() {
             })}
           </div>
 
-          <p className="text-sm text-gray-500 text-center">
-            経過時間: {formatTime(elapsedSeconds)}
-          </p>
+          <div className="text-center space-y-1">
+            <p className="text-sm text-gray-500">
+              経過時間: {formatTime(elapsedSeconds)}
+              {estimatedTotal > 0 && (
+                <span className="text-gray-400 ml-2">
+                  / 推定 {formatTime(estimatedTotal)}
+                </span>
+              )}
+            </p>
+          </div>
 
           <p className="text-sm text-gray-500 text-center">
             ブラウザを閉じても処理は続きます。後からこのページに戻れます。

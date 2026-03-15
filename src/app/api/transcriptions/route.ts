@@ -7,6 +7,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { transcribeWithElevenLabs, formatTranscription } from "@/lib/transcription";
 import { correctTranscription } from "@/lib/llm/correct";
+import { analyzeSpeakers } from "@/lib/llm/analyze-speakers";
 
 export const maxDuration = 600;
 
@@ -59,8 +60,11 @@ async function processTranscription(id: string, tempFilePath: string, keyterms?:
     });
     console.log(`[transcription] ${id}: Transcription saved, starting correction`);
 
-    // LLM清書を自動実行
-    await correctTranscription(id);
+    // LLM清書を自動実行（完了後は "analyzing" ステータスに）
+    await correctTranscription(id, "analyzing");
+
+    // AI話者分析を自動実行
+    await analyzeSpeakers(id);
   } catch (error) {
     console.error(`[transcription] ${id}: Error -`, error);
     const message = error instanceof Error ? error.message : "Unknown error";
