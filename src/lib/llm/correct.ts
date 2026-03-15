@@ -28,7 +28,7 @@ interface CorrectionResult {
   summary: string;
 }
 
-const BATCH_SIZE = 30;
+const BATCH_SIZE = 20;
 
 export async function correctTranscription(transcriptionId: string): Promise<void> {
   console.log(`[correct] ${transcriptionId}: Starting LLM correction`);
@@ -76,13 +76,21 @@ export async function correctTranscription(transcriptionId: string): Promise<voi
 
       const message = await anthropic.messages.create({
         model: "claude-sonnet-4-20250514",
-        max_tokens: 8192,
+        max_tokens: 16384,
         messages: [{ role: "user", content: prompt }],
-      }, { timeout: 180000 }); // 3分タイムアウト
+      }, { timeout: 300000 }); // 5分タイムアウト
+
+      console.log(`[correct] ${transcriptionId}: Batch ${batchIdx + 1} API done, stop_reason=${message.stop_reason}, output_tokens=${message.usage.output_tokens}`);
 
       const content = message.content[0];
       if (content.type !== "text") {
         throw new Error(`Batch ${batchIdx}: Unexpected response type`);
+      }
+
+      // stop_reason が max_tokens の場合、JSONが不完全
+      if (message.stop_reason === "max_tokens") {
+        console.error(`[correct] ${transcriptionId}: Batch ${batchIdx + 1} hit max_tokens limit, response truncated`);
+        throw new Error(`Batch ${batchIdx + 1}: Response truncated (max_tokens reached)`);
       }
 
       let jsonText = content.text.trim();
@@ -90,7 +98,14 @@ export async function correctTranscription(transcriptionId: string): Promise<voi
         jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
       }
 
-      const result: CorrectionResult = JSON.parse(jsonText);
+      let result: CorrectionResult;
+      try {
+        result = JSON.parse(jsonText);
+      } catch (parseErr) {
+        console.error(`[correct] ${transcriptionId}: Batch ${batchIdx + 1} JSON parse failed, response length=${content.text.length}`);
+        console.error(`[correct] ${transcriptionId}: Last 100 chars: ${content.text.slice(-100)}`);
+        throw parseErr;
+      }
       allCorrected.push(...result.corrected_utterances);
       totalChanges += result.total_changes;
       console.log(`[correct] ${transcriptionId}: Batch ${batchIdx + 1} done, ${result.total_changes} changes`);
