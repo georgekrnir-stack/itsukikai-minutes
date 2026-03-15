@@ -102,14 +102,17 @@ function HighlightedText({ text, changes }: { text: string; changes: CorrectedUt
         p.change ? (
           <span
             key={i}
-            className="relative cursor-help"
+            className="relative cursor-help group/tip"
             style={{
               backgroundColor: "#FEF9C3",
               borderBottom: "2px dotted #D97706",
             }}
-            title={`変更前: ${p.change.original}\n理由: ${p.change.reason}`}
           >
             {p.text}
+            <span className="hidden group-hover/tip:block absolute bottom-full left-0 mb-1 px-3 py-2 bg-gray-800 text-white text-xs rounded shadow-lg whitespace-nowrap z-50">
+              <span className="block">変更前: {p.change.original}</span>
+              <span className="block text-gray-300">理由: {p.change.reason}</span>
+            </span>
           </span>
         ) : (
           <span key={i}>{p.text}</span>
