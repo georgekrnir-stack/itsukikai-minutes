@@ -28,6 +28,8 @@ interface CorrectionResult {
   summary: string;
 }
 
+const BATCH_SIZE = 50;
+
 export async function correctTranscription(transcriptionId: string): Promise<void> {
   console.log(`[correct] ${transcriptionId}: Starting LLM correction`);
 
@@ -48,48 +50,70 @@ export async function correctTranscription(transcriptionId: string): Promise<voi
   try {
     const utterances = transcription.utterances as unknown as Utterance[];
     const dictEntries = await prisma.customDictionary.findMany();
-    console.log(`[correct] ${transcriptionId}: Dictionary entries: ${dictEntries.length}`);
-
-    const prompt = buildCorrectionPrompt(utterances, dictEntries);
+    console.log(`[correct] ${transcriptionId}: Dictionary entries: ${dictEntries.length}, utterances: ${utterances.length}`);
 
     const anthropic = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
     });
 
+    // バッチ分割
+    const batches: Utterance[][] = [];
+    for (let i = 0; i < utterances.length; i += BATCH_SIZE) {
+      batches.push(utterances.slice(i, i + BATCH_SIZE));
+    }
+    console.log(`[correct] ${transcriptionId}: Split into ${batches.length} batches`);
+
+    const allCorrected: CorrectedUtterance[] = [];
+    let totalChanges = 0;
     const startTime = Date.now();
-    const message = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 16384,
-      messages: [{ role: "user", content: prompt }],
-    });
+
+    for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+      const batch = batches[batchIdx];
+      const startIndex = batchIdx * BATCH_SIZE;
+      console.log(`[correct] ${transcriptionId}: Processing batch ${batchIdx + 1}/${batches.length} (index ${startIndex}-${startIndex + batch.length - 1})`);
+
+      const prompt = buildCorrectionPrompt(batch, dictEntries, startIndex);
+
+      const message = await anthropic.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 16384,
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      const content = message.content[0];
+      if (content.type !== "text") {
+        throw new Error(`Batch ${batchIdx}: Unexpected response type`);
+      }
+
+      let jsonText = content.text.trim();
+      if (jsonText.startsWith("```")) {
+        jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+      }
+
+      const result: CorrectionResult = JSON.parse(jsonText);
+      allCorrected.push(...result.corrected_utterances);
+      totalChanges += result.total_changes;
+      console.log(`[correct] ${transcriptionId}: Batch ${batchIdx + 1} done, ${result.total_changes} changes`);
+    }
+
     const elapsed = Date.now() - startTime;
-    console.log(`[correct] ${transcriptionId}: Claude API completed in ${elapsed}ms`);
+    console.log(`[correct] ${transcriptionId}: All batches completed in ${elapsed}ms, total ${totalChanges} changes`);
 
-    const content = message.content[0];
-    if (content.type !== "text") {
-      throw new Error("Unexpected response type");
-    }
+    // indexでソート（念のため）
+    allCorrected.sort((a, b) => a.index - b.index);
 
-    // JSONをパース（コードブロックで囲まれている場合に対応）
-    let jsonText = content.text.trim();
-    if (jsonText.startsWith("```")) {
-      jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
-    }
-
-    const result: CorrectionResult = JSON.parse(jsonText);
-    console.log(`[correct] ${transcriptionId}: ${result.total_changes} corrections made`);
+    const summary = `${totalChanges}件の補正を行いました（${batches.length}バッチ処理）`;
 
     await prisma.transcription.update({
       where: { id: transcriptionId },
       data: {
-        correctedUtterances: JSON.parse(JSON.stringify(result.corrected_utterances)),
-        correctionSummary: result.summary,
+        correctedUtterances: JSON.parse(JSON.stringify(allCorrected)),
+        correctionSummary: summary,
         status: "completed",
       },
     });
   } catch (error) {
     console.error(`[correct] ${transcriptionId}: Error -`, error);
-    // 清書失敗でもcompletedに進める（文字起こし結果は使える）
     await prisma.transcription.update({
       where: { id: transcriptionId },
       data: {
@@ -100,7 +124,7 @@ export async function correctTranscription(transcriptionId: string): Promise<voi
   }
 }
 
-function buildCorrectionPrompt(utterances: Utterance[], dictEntries: DictEntry[]): string {
+function buildCorrectionPrompt(utterances: Utterance[], dictEntries: DictEntry[], startIndex: number): string {
   let dictSection = "";
   if (dictEntries.length > 0) {
     dictSection = "## 修正辞書\n以下の誤表記→正しい表記の対応に従って修正してください:\n";
@@ -114,7 +138,7 @@ function buildCorrectionPrompt(utterances: Utterance[], dictEntries: DictEntry[]
   }
 
   const utteranceText = utterances
-    .map((u, i) => `index ${i} [${u.speaker_id || "unknown"}]: ${u.text}`)
+    .map((u, i) => `index ${startIndex + i} [${u.speaker_id || "unknown"}]: ${u.text}`)
     .join("\n");
 
   return `あなたは医療法人の会議文字起こしテキストの校正アシスタントです。
@@ -146,7 +170,7 @@ ${dictSection}
 {
   "corrected_utterances": [
     {
-      "index": 0,
+      "index": ${startIndex},
       "original_text": "（元のテキスト）",
       "corrected_text": "（補正後のテキスト、変更がなければ元テキストと同じ）",
       "changes": [

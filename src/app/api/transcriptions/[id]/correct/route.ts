@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { correctTranscription } from "@/lib/llm/correct";
 
 export async function POST(
@@ -13,6 +14,12 @@ export async function POST(
   }
 
   const { id } = await params;
+
+  // ステータスを先にcorrectingに変更（ポーリングが正しく動くように）
+  await prisma.transcription.update({
+    where: { id },
+    data: { status: "correcting" },
+  });
 
   // バックグラウンドで実行
   correctTranscription(id).catch((error) => {
