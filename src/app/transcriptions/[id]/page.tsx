@@ -166,6 +166,13 @@ export default function TranscriptionPage() {
   const [mergeSource, setMergeSource] = useState<string | null>(null);
   const [merging, setMerging] = useState(false);
 
+  // AI話者分析
+  const [analyzing, setAnalyzing] = useState(false);
+  const [suggestions, setSuggestions] = useState<{
+    nameSuggestions: Record<string, { name: string; reason: string }>;
+    mergeGroups: { speakerIds: string[]; reason: string }[];
+  } | null>(null);
+
   // 話者発言プレビュー
   const [previewSpeaker, setPreviewSpeaker] = useState<string | null>(null);
 
@@ -297,6 +304,131 @@ export default function TranscriptionPage() {
     }
   };
 
+  const handleAnalyzeSpeakers = async () => {
+    setAnalyzing(true);
+    setSuggestions(null);
+    try {
+      const res = await fetch(`/api/transcriptions/${id}/analyze-speakers`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "分析に失敗しました");
+      }
+      const result = await res.json();
+      setSuggestions(result);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "分析に失敗しました");
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const handleApplyAllSuggestions = async () => {
+    if (!suggestions) return;
+    if (!confirm("全ての提案（名前設定＋マージ）を適用します。マージは元に戻せません。よろしいですか？")) return;
+
+    // 1. 名前を全てセット
+    const newMapping = { ...speakerMapping };
+    for (const [sid, info] of Object.entries(suggestions.nameSuggestions)) {
+      if (speakers.includes(sid)) {
+        newMapping[sid] = info.name;
+      }
+    }
+    setSpeakerMapping(newMapping);
+
+    // 名前を保存
+    try {
+      const res = await fetch(`/api/transcriptions/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ speakerMapping: newMapping }),
+      });
+      if (!res.ok) throw new Error("名前の保存に失敗しました");
+      setData((prev) => (prev ? { ...prev, speakerMapping: newMapping } : prev));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "名前の保存に失敗しました");
+      return;
+    }
+
+    // 2. マージグループを順次実行
+    for (const group of suggestions.mergeGroups) {
+      const validIds = group.speakerIds.filter((sid) => speakers.includes(sid));
+      if (validIds.length < 2) continue;
+
+      // 発言数最多をtargetに
+      let targetId = validIds[0];
+      let maxCount = utteranceCounts[targetId] || 0;
+      for (const sid of validIds) {
+        if ((utteranceCounts[sid] || 0) > maxCount) {
+          maxCount = utteranceCounts[sid] || 0;
+          targetId = sid;
+        }
+      }
+      const mergeIds = validIds.filter((sid) => sid !== targetId);
+
+      try {
+        const res = await fetch(`/api/transcriptions/${id}/merge-speakers`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ targetSpeakerId: targetId, mergeSpeakerIds: mergeIds }),
+        });
+        if (!res.ok) throw new Error("マージに失敗しました");
+        const updated = await res.json();
+        setData(updated);
+        if (updated.speakerMapping) setSpeakerMapping(updated.speakerMapping);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : "マージエラー");
+        break;
+      }
+    }
+
+    setSuggestions(null);
+    await fetchData();
+  };
+
+  const handleMergeGroup = async (group: { speakerIds: string[]; reason: string }) => {
+    const validIds = group.speakerIds.filter((sid) => speakers.includes(sid));
+    if (validIds.length < 2) return;
+
+    let targetId = validIds[0];
+    let maxCount = utteranceCounts[targetId] || 0;
+    for (const sid of validIds) {
+      if ((utteranceCounts[sid] || 0) > maxCount) {
+        maxCount = utteranceCounts[sid] || 0;
+        targetId = sid;
+      }
+    }
+    const mergeIds = validIds.filter((sid) => sid !== targetId);
+    const targetLabel = getSpeakerLabel(targetId, speakerMapping);
+
+    if (!confirm(`${mergeIds.map((s) => getSpeakerLabel(s, speakerMapping)).join("、")}を${targetLabel}に統合します。この操作は元に戻せません。`)) return;
+
+    setMerging(true);
+    try {
+      const res = await fetch(`/api/transcriptions/${id}/merge-speakers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetSpeakerId: targetId, mergeSpeakerIds: mergeIds }),
+      });
+      if (!res.ok) throw new Error("マージに失敗しました");
+      const updated = await res.json();
+      setData(updated);
+      if (updated.speakerMapping) setSpeakerMapping(updated.speakerMapping);
+      // このグループを提案から除去
+      if (suggestions) {
+        setSuggestions({
+          ...suggestions,
+          mergeGroups: suggestions.mergeGroups.filter((g) => g !== group),
+        });
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "マージエラー");
+    } finally {
+      setMerging(false);
+    }
+  };
+
   const handleGenerateMinutes = async () => {
     if (minutes) {
       const msg = minutes.isEdited
@@ -404,7 +536,25 @@ export default function TranscriptionPage() {
         {/* 話者マッピング */}
         {speakers.length > 0 && (
           <div className="bg-white rounded-lg shadow p-6 mb-6">
-            <h2 className="text-lg font-semibold mb-4">話者の名前を設定</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">話者の名前を設定</h2>
+              {speakers.length >= 2 && (
+                <button
+                  onClick={handleAnalyzeSpeakers}
+                  disabled={analyzing}
+                  className="text-sm border border-purple-300 text-purple-700 px-3 py-1 rounded hover:bg-purple-50 disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {analyzing ? (
+                    <>
+                      <span className="w-3.5 h-3.5 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />
+                      分析中...
+                    </>
+                  ) : (
+                    "AIで話者を分析"
+                  )}
+                </button>
+              )}
+            </div>
             <div className="space-y-3">
               {speakers.map((speaker) => {
                 const color = getSpeakerColor(speaker, speakers);
@@ -466,6 +616,20 @@ export default function TranscriptionPage() {
                         キャンセル
                       </button>
                     )}
+                    {suggestions?.nameSuggestions[speaker] && !speakerMapping[speaker] && (
+                      <div className="ml-10 flex items-center gap-2">
+                        <span className="text-xs text-purple-500">
+                          AI提案: {suggestions.nameSuggestions[speaker].name}
+                          <span className="text-gray-400 ml-1">({suggestions.nameSuggestions[speaker].reason})</span>
+                        </span>
+                        <button
+                          onClick={() => setSpeakerMapping((prev) => ({ ...prev, [speaker]: suggestions.nameSuggestions[speaker].name }))}
+                          className="text-xs bg-purple-50 border border-purple-200 text-purple-700 px-2 py-0.5 rounded hover:bg-purple-100"
+                        >
+                          採用
+                        </button>
+                      </div>
+                    )}
                     {previewSpeaker === speaker && data?.utterances && (
                       <div className="ml-6 mt-1 border border-gray-200 rounded bg-gray-50 max-h-48 overflow-y-auto">
                         {data.utterances.map((u, i) => {
@@ -485,6 +649,60 @@ export default function TranscriptionPage() {
                 );
               })}
             </div>
+
+            {/* AI分析マージグループ */}
+            {suggestions && suggestions.mergeGroups.length > 0 && (
+              <div className="mt-4 space-y-3">
+                <h3 className="text-sm font-semibold text-purple-700">マージ候補（AI提案）</h3>
+                {suggestions.mergeGroups.map((group, gi) => {
+                  const validIds = group.speakerIds.filter((sid) => speakers.includes(sid));
+                  if (validIds.length < 2) return null;
+                  return (
+                    <div key={gi} className="border-2 border-dashed border-purple-300 rounded-lg p-3 bg-purple-50/50">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        {validIds.map((sid) => {
+                          const color = getSpeakerColor(sid, speakers);
+                          return (
+                            <span key={sid} className="inline-flex items-center gap-1 text-sm bg-white border border-gray-200 rounded px-2 py-0.5">
+                              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color.border }} />
+                              {getSpeakerLabel(sid, speakerMapping)}
+                              <span className="text-gray-400 text-xs">({utteranceCounts[sid] || 0}件)</span>
+                            </span>
+                          );
+                        })}
+                      </div>
+                      <p className="text-xs text-gray-500 mb-2">{group.reason}</p>
+                      <button
+                        onClick={() => handleMergeGroup(group)}
+                        disabled={merging}
+                        className="text-xs bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700 disabled:opacity-50"
+                      >
+                        このグループをマージ
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* 提案を全て適用 */}
+            {suggestions && (
+              <div className="mt-4 pt-3 border-t border-purple-200">
+                <button
+                  onClick={handleApplyAllSuggestions}
+                  disabled={merging}
+                  className="text-sm bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 disabled:opacity-50"
+                >
+                  提案を全て適用
+                </button>
+                <button
+                  onClick={() => setSuggestions(null)}
+                  className="text-sm text-gray-500 hover:text-gray-700 ml-3"
+                >
+                  提案を閉じる
+                </button>
+              </div>
+            )}
 
             {/* 同名検出ヒント */}
             {(() => {
