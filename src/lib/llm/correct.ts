@@ -22,13 +22,15 @@ interface CorrectedUtterance {
   changes: { original: string; corrected: string; reason: string }[];
 }
 
-interface CorrectionResult {
-  corrected_utterances: CorrectedUtterance[];
+interface DiffOnlyResult {
+  corrections: {
+    index: number;
+    corrected_text: string;
+    changes: { original: string; corrected: string; reason: string }[];
+  }[];
   total_changes: number;
   summary: string;
 }
-
-const BATCH_SIZE = 20;
 
 export async function correctTranscription(transcriptionId: string): Promise<void> {
   console.log(`[correct] ${transcriptionId}: Starting LLM correction`);
@@ -56,74 +58,70 @@ export async function correctTranscription(transcriptionId: string): Promise<voi
       apiKey: process.env.ANTHROPIC_API_KEY,
     });
 
-    // バッチ分割
-    const batches: Utterance[][] = [];
-    for (let i = 0; i < utterances.length; i += BATCH_SIZE) {
-      batches.push(utterances.slice(i, i + BATCH_SIZE));
-    }
-    console.log(`[correct] ${transcriptionId}: Split into ${batches.length} batches`);
+    const prompt = buildCorrectionPrompt(utterances, dictEntries);
 
-    const allCorrected: CorrectedUtterance[] = [];
-    let totalChanges = 0;
     const startTime = Date.now();
-
-    for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
-      const batch = batches[batchIdx];
-      const startIndex = batchIdx * BATCH_SIZE;
-      console.log(`[correct] ${transcriptionId}: Processing batch ${batchIdx + 1}/${batches.length} (index ${startIndex}-${startIndex + batch.length - 1})`);
-
-      const prompt = buildCorrectionPrompt(batch, dictEntries, startIndex);
-
-      const message = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 16384,
-        messages: [{ role: "user", content: prompt }],
-      }, { timeout: 300000 }); // 5分タイムアウト
-
-      console.log(`[correct] ${transcriptionId}: Batch ${batchIdx + 1} API done, stop_reason=${message.stop_reason}, output_tokens=${message.usage.output_tokens}`);
-
-      const content = message.content[0];
-      if (content.type !== "text") {
-        throw new Error(`Batch ${batchIdx}: Unexpected response type`);
-      }
-
-      // stop_reason が max_tokens の場合、JSONが不完全
-      if (message.stop_reason === "max_tokens") {
-        console.error(`[correct] ${transcriptionId}: Batch ${batchIdx + 1} hit max_tokens limit, response truncated`);
-        throw new Error(`Batch ${batchIdx + 1}: Response truncated (max_tokens reached)`);
-      }
-
-      let jsonText = content.text.trim();
-      if (jsonText.startsWith("```")) {
-        jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
-      }
-
-      let result: CorrectionResult;
-      try {
-        result = JSON.parse(jsonText);
-      } catch (parseErr) {
-        console.error(`[correct] ${transcriptionId}: Batch ${batchIdx + 1} JSON parse failed, response length=${content.text.length}`);
-        console.error(`[correct] ${transcriptionId}: Last 100 chars: ${content.text.slice(-100)}`);
-        throw parseErr;
-      }
-      allCorrected.push(...result.corrected_utterances);
-      totalChanges += result.total_changes;
-      console.log(`[correct] ${transcriptionId}: Batch ${batchIdx + 1} done, ${result.total_changes} changes`);
-    }
+    const message = await anthropic.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 16384,
+      messages: [{ role: "user", content: prompt }],
+    }, { timeout: 600000 }); // 10分タイムアウト
 
     const elapsed = Date.now() - startTime;
-    console.log(`[correct] ${transcriptionId}: All batches completed in ${elapsed}ms, total ${totalChanges} changes`);
+    console.log(`[correct] ${transcriptionId}: Claude API completed in ${elapsed}ms, stop_reason=${message.stop_reason}, output_tokens=${message.usage.output_tokens}`);
 
-    // indexでソート（念のため）
-    allCorrected.sort((a, b) => a.index - b.index);
+    const content = message.content[0];
+    if (content.type !== "text") {
+      throw new Error("Unexpected response type");
+    }
 
-    const summary = `${totalChanges}件の補正を行いました（${batches.length}バッチ処理）`;
+    if (message.stop_reason === "max_tokens") {
+      console.error(`[correct] ${transcriptionId}: Response truncated (max_tokens)`);
+      throw new Error("Response truncated (max_tokens reached)");
+    }
+
+    let jsonText = content.text.trim();
+    if (jsonText.startsWith("```")) {
+      jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+    }
+
+    let diffResult: DiffOnlyResult;
+    try {
+      diffResult = JSON.parse(jsonText);
+    } catch (parseErr) {
+      console.error(`[correct] ${transcriptionId}: JSON parse failed, length=${content.text.length}`);
+      console.error(`[correct] ${transcriptionId}: Last 200 chars: ${content.text.slice(-200)}`);
+      throw parseErr;
+    }
+
+    console.log(`[correct] ${transcriptionId}: ${diffResult.corrections.length} utterances corrected, ${diffResult.total_changes} total changes`);
+
+    // 差分から全utterances分のcorrectedUtterances配列を構築
+    const correctionMap = new Map(diffResult.corrections.map((c) => [c.index, c]));
+
+    const allCorrected: CorrectedUtterance[] = utterances.map((u, i) => {
+      const correction = correctionMap.get(i);
+      if (correction) {
+        return {
+          index: i,
+          original_text: u.text,
+          corrected_text: correction.corrected_text,
+          changes: correction.changes,
+        };
+      }
+      return {
+        index: i,
+        original_text: u.text,
+        corrected_text: u.text,
+        changes: [],
+      };
+    });
 
     await prisma.transcription.update({
       where: { id: transcriptionId },
       data: {
         correctedUtterances: JSON.parse(JSON.stringify(allCorrected)),
-        correctionSummary: summary,
+        correctionSummary: diffResult.summary,
         status: "completed",
       },
     });
@@ -139,7 +137,7 @@ export async function correctTranscription(transcriptionId: string): Promise<voi
   }
 }
 
-function buildCorrectionPrompt(utterances: Utterance[], dictEntries: DictEntry[], startIndex: number): string {
+function buildCorrectionPrompt(utterances: Utterance[], dictEntries: DictEntry[]): string {
   let dictSection = "";
   if (dictEntries.length > 0) {
     dictSection = "## 修正辞書\n以下の誤表記→正しい表記の対応に従って修正してください:\n";
@@ -153,7 +151,7 @@ function buildCorrectionPrompt(utterances: Utterance[], dictEntries: DictEntry[]
   }
 
   const utteranceText = utterances
-    .map((u, i) => `index ${startIndex + i} [${u.speaker_id || "unknown"}]: ${u.text}`)
+    .map((u, i) => `index ${i} [${u.speaker_id || "unknown"}]: ${u.text}`)
     .join("\n");
 
   return `あなたは医療法人の会議文字起こしテキストの校正アシスタントです。
@@ -182,12 +180,13 @@ ${dictSection}
 ## 出力フォーマット
 必ず以下のJSON形式のみで出力してください。JSON以外のテキストは含めないでください。
 
+**重要: 修正があったutteranceだけを出力してください。変更がないutteranceは含めないでください。**
+
 {
-  "corrected_utterances": [
+  "corrections": [
     {
-      "index": ${startIndex},
-      "original_text": "（元のテキスト）",
-      "corrected_text": "（補正後のテキスト、変更がなければ元テキストと同じ）",
+      "index": 5,
+      "corrected_text": "（修正後のテキスト全文）",
       "changes": [
         {
           "original": "森山樹病院",
@@ -202,8 +201,10 @@ ${dictSection}
 }
 
 ## 注意
-- 全てのutteranceを出力に含めてください（変更がないものもchanges: []で含める）
+- 修正が必要なutteranceのみをcorrectionsに含めてください
+- 変更がないutteranceは出力に含めないでください（出力を最小限に保つため）
 - indexはutterances配列のインデックスと一致させてください
+- corrected_textにはutterance全文を入れてください（修正箇所だけでなく全文）
 - 1つのutteranceに複数の修正がある場合は、changesに全て記録してください
 
 ## 文字起こしデータ（utterances）

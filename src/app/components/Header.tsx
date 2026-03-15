@@ -20,7 +20,7 @@ export function Header() {
       <div className="mx-auto max-w-4xl px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-6">
           <a href="/" className="text-lg font-bold text-gray-800">
-            いつき会 議事録 <span className="text-xs text-gray-400 font-normal">v6.4</span>
+            いつき会 議事録 <span className="text-xs text-gray-400 font-normal">v6.5</span>
           </a>
           <nav className="flex gap-4 text-sm">
             {navItems.map((item) => (
