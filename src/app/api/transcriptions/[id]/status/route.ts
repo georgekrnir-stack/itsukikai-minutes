@@ -1,33 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { checkTranscriptionAccess } from "@/lib/auth-helpers";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { id } = await params;
 
-  const transcription = await prisma.transcription.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      status: true,
-      title: true,
-      fileSize: true,
-      errorMessage: true,
-    },
+  const { transcription, error } = await checkTranscriptionAccess(id, session);
+  if (error) return error;
+
+  const t = transcription as Record<string, unknown>;
+  return NextResponse.json({
+    id: t.id,
+    status: t.status,
+    title: t.title,
+    fileSize: t.fileSize,
+    errorMessage: t.errorMessage,
   });
-
-  if (!transcription) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  return NextResponse.json(transcription);
 }

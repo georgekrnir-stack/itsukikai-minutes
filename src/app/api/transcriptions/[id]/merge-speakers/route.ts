@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { checkTranscriptionAccess } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/prisma";
 
 interface Utterance {
@@ -16,11 +17,11 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { id } = await params;
+
+  const { transcription, error } = await checkTranscriptionAccess(id, session);
+  if (error) return error;
+
   const body = await request.json();
   const { targetSpeakerId, mergeSpeakerIds } = body as {
     targetSpeakerId: string;
@@ -34,17 +35,10 @@ export async function POST(
     );
   }
 
-  const transcription = await prisma.transcription.findUnique({
-    where: { id },
-  });
-
-  if (!transcription) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const utterances = (transcription.utterances as Utterance[] | null) || [];
-  const speakers = (transcription.speakers as string[] | null) || [];
-  const speakerMapping = (transcription.speakerMapping as Record<string, string> | null) || {};
+  const t = transcription as Record<string, unknown>;
+  const utterances = (t.utterances as Utterance[] | null) || [];
+  const speakers = (t.speakers as string[] | null) || [];
+  const speakerMapping = (t.speakerMapping as Record<string, string> | null) || {};
 
   // Validate that target and merge IDs exist in speakers
   const mergeSet = new Set(mergeSpeakerIds);

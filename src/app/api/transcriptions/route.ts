@@ -4,6 +4,7 @@ import path from "path";
 import os from "os";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { getSessionUser } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/prisma";
 import { transcribeWithElevenLabs, formatTranscription } from "@/lib/transcription";
 import { correctTranscription } from "@/lib/llm/correct";
@@ -87,9 +88,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const user = getSessionUser(session);
+
   const { searchParams } = new URL(request.url);
   const search = searchParams.get("search") || "";
   const status = searchParams.get("status") || "";
+  const ownerFilter = searchParams.get("owner") || "";
 
   const where: Record<string, unknown> = {};
   if (search) {
@@ -97,6 +101,14 @@ export async function GET(request: NextRequest) {
   }
   if (status && status !== "all") {
     where.status = status;
+  }
+
+  // 一般ユーザーは自分のアーカイブのみ
+  if (user && user.role !== "admin") {
+    where.userId = user.id;
+  } else if (ownerFilter === "mine" && user) {
+    // adminが「自分のみ」フィルタを使う場合
+    where.userId = user.id;
   }
 
   const transcriptions = await prisma.transcription.findMany({

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { checkTranscriptionAccess } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/prisma";
 import Anthropic from "@anthropic-ai/sdk";
 import { DEFAULT_MINUTES_PROMPT } from "@/lib/prompt-defaults";
@@ -49,11 +50,10 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { id } = await params;
+
+  const { error } = await checkTranscriptionAccess(id, session);
+  if (error) return error;
 
   const minutes = await prisma.minutes.findUnique({
     where: { transcriptionId: id },
@@ -74,21 +74,17 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { id } = await params;
+
+  const { transcription, error } = await checkTranscriptionAccess(id, session);
+  if (error) return error;
 
   if (generatingSet.has(id)) {
     return NextResponse.json({ status: "generating" }, { status: 202 });
   }
 
-  const transcription = await prisma.transcription.findUnique({
-    where: { id },
-  });
-
-  if (!transcription || !transcription.utterances) {
+  const t = transcription as Record<string, unknown>;
+  if (!t.utterances) {
     return NextResponse.json({ error: "Transcription not found" }, { status: 404 });
   }
 
@@ -96,8 +92,8 @@ export async function POST(
   generatingSet.add(id);
   console.log(`[minutes] ${id}: Starting minutes generation (async)`);
 
-  generateMinutesBackground(id, transcription).catch((error) => {
-    console.error(`[minutes] ${id}: Background generation error -`, error);
+  generateMinutesBackground(id, t as { title: string; utterances: unknown; correctedUtterances: unknown; speakerMapping: unknown }).catch((err) => {
+    console.error(`[minutes] ${id}: Background generation error -`, err);
   });
 
   return NextResponse.json({ status: "generating" }, { status: 202 });
@@ -183,11 +179,11 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { id } = await params;
+
+  const { error } = await checkTranscriptionAccess(id, session);
+  if (error) return error;
+
   const body = await request.json();
 
   const minutes = await prisma.minutes.findUnique({

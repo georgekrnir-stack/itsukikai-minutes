@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { checkTranscriptionAccess } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/prisma";
 
 interface CorrectedUtterance {
@@ -15,11 +16,11 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string; index: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { id, index: indexStr } = await params;
+
+  const { transcription, error } = await checkTranscriptionAccess(id, session);
+  if (error) return error;
+
   const utteranceIndex = parseInt(indexStr, 10);
   const body = await request.json();
   const { corrected_text } = body;
@@ -28,15 +29,8 @@ export async function PATCH(
     return NextResponse.json({ error: "corrected_text is required" }, { status: 400 });
   }
 
-  const transcription = await prisma.transcription.findUnique({
-    where: { id },
-  });
-
-  if (!transcription) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const correctedUtterances = transcription.correctedUtterances as unknown as CorrectedUtterance[] | null;
+  const t = transcription as Record<string, unknown>;
+  const correctedUtterances = t.correctedUtterances as unknown as CorrectedUtterance[] | null;
   if (!correctedUtterances || !correctedUtterances[utteranceIndex]) {
     return NextResponse.json({ error: "Utterance not found" }, { status: 404 });
   }

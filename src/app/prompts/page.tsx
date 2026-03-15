@@ -48,17 +48,21 @@ export default function PromptsPage() {
 
   const { showConfirm, modalProps } = useModal();
 
+  const role = (session?.user as Record<string, unknown> | undefined)?.role as string | undefined;
+
   useEffect(() => {
     if (status === "unauthenticated") {
       router.push("/login");
+    } else if (status === "authenticated" && role !== "admin") {
+      router.push("/");
     }
-  }, [status, router]);
+  }, [status, role, router]);
 
   useEffect(() => {
-    if (status === "authenticated") {
+    if (status === "authenticated" && role === "admin") {
       fetchTemplates();
     }
-  }, [status]);
+  }, [status, role]);
 
   async function fetchTemplates() {
     setLoading(true);
@@ -111,7 +115,7 @@ export default function PromptsPage() {
     return <LoadingSpinner fullPage text="読み込み中..." />;
   }
 
-  if (!session?.user) return null;
+  if (!session?.user || role !== "admin") return null;
 
   const currentTemplate = templates.find((t) => t.name === activeTab);
 

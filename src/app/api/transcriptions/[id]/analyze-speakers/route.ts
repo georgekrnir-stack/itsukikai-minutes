@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { checkTranscriptionAccess } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/prisma";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -27,23 +28,15 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { id } = await params;
 
-  const transcription = await prisma.transcription.findUnique({
-    where: { id },
-  });
+  const { transcription, error } = await checkTranscriptionAccess(id, session);
+  if (error) return error;
 
-  if (!transcription) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const utterances = (transcription.utterances as unknown as Utterance[]) || [];
-  const corrected = (transcription.correctedUtterances as unknown as CorrectedUtterance[]) || [];
-  const speakers = (transcription.speakers as string[]) || [];
+  const t = transcription as Record<string, unknown>;
+  const utterances = (t.utterances as unknown as Utterance[]) || [];
+  const corrected = (t.correctedUtterances as unknown as CorrectedUtterance[]) || [];
+  const speakers = (t.speakers as string[]) || [];
 
   if (speakers.length < 2) {
     return NextResponse.json({ error: "話者が2人未満のため分析できません" }, { status: 400 });
@@ -140,8 +133,8 @@ ${fullText}
     });
 
     return NextResponse.json(result);
-  } catch (error) {
-    console.error(`[analyze-speakers] ${id}: Error -`, error);
+  } catch (err) {
+    console.error(`[analyze-speakers] ${id}: Error -`, err);
     return NextResponse.json(
       { error: "話者分析に失敗しました。もう一度お試しください。" },
       { status: 500 }

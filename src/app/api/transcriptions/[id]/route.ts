@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { checkTranscriptionAccess, requireAdmin, getSessionUser } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(
@@ -8,19 +9,10 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { id } = await params;
 
-  const transcription = await prisma.transcription.findUnique({
-    where: { id },
-  });
-
-  if (!transcription) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  const { transcription, error } = await checkTranscriptionAccess(id, session);
+  if (error) return error;
 
   return NextResponse.json(transcription);
 }
@@ -30,29 +22,31 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { id } = await params;
+
+  const { transcription, error } = await checkTranscriptionAccess(id, session);
+  if (error) return error;
+
   const body = await request.json();
+  const user = getSessionUser(session);
 
-  const transcription = await prisma.transcription.findUnique({
-    where: { id },
-  });
-
-  if (!transcription) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const oldMapping = transcription.speakerMapping as Record<string, string> | null;
+  const oldMapping = (transcription as Record<string, unknown>).speakerMapping as Record<string, string> | null;
   const newMapping = body.speakerMapping as Record<string, string> | undefined;
+
+  const data: Record<string, unknown> = {};
+  if (newMapping !== undefined) data.speakerMapping = newMapping;
+
+  // admin-only fields
+  if (user?.role === "admin") {
+    if (body.title !== undefined) data.title = body.title;
+    if (body.category !== undefined) data.category = body.category;
+    if (body.createdAt !== undefined) data.createdAt = new Date(body.createdAt);
+    if (body.userId !== undefined) data.userId = body.userId || null;
+  }
 
   const updated = await prisma.transcription.update({
     where: { id },
-    data: {
-      speakerMapping: newMapping ?? undefined,
-    },
+    data,
   });
 
   // 議事録が存在する場合、テキスト内の話者名を置換
@@ -82,4 +76,27 @@ export async function PATCH(
   }
 
   return NextResponse.json(updated);
+}
+
+// DELETE: アーカイブ削除（admin専用）
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await getServerSession(authOptions);
+  const denied = requireAdmin(session);
+  if (denied) return denied;
+
+  const { id } = await params;
+
+  const transcription = await prisma.transcription.findUnique({ where: { id } });
+  if (!transcription) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // Minutes → Transcription の順で削除
+  await prisma.minutes.deleteMany({ where: { transcriptionId: id } });
+  await prisma.transcription.delete({ where: { id } });
+
+  return NextResponse.json({ ok: true });
 }

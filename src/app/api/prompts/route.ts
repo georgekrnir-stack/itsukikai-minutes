@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { requireAdmin } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/prisma";
 import { DEFAULT_CORRECTION_PROMPT, DEFAULT_MINUTES_PROMPT } from "@/lib/prompt-defaults";
 
@@ -19,12 +20,11 @@ async function ensureDefaults() {
   }
 }
 
-// GET: 全テンプレート取得（なければデフォルトを作成）
+// GET: 全テンプレート取得（admin専用）
 export async function GET() {
   const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const denied = requireAdmin(session);
+  if (denied) return denied;
 
   await ensureDefaults();
 
@@ -35,12 +35,11 @@ export async function GET() {
   return NextResponse.json(templates);
 }
 
-// PATCH: テンプレート更新（name指定）
+// PATCH: テンプレート更新（admin専用）
 export async function PATCH(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const denied = requireAdmin(session);
+  if (denied) return denied;
 
   const body = await request.json();
   const { name, content } = body as { name: string; content: string };

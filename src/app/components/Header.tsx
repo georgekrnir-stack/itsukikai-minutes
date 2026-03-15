@@ -9,11 +9,19 @@ export function Header() {
 
   if (!session?.user) return null;
 
+  const role = (session.user as Record<string, unknown>).role as string | undefined;
+  const isAdmin = role === "admin";
+
   const navItems = [
     { href: "/", label: "ダッシュボード" },
     { href: "/upload", label: "新規作成" },
     { href: "/dictionary", label: "辞書管理" },
-    { href: "/prompts", label: "プロンプト管理" },
+    ...(isAdmin
+      ? [
+          { href: "/prompts", label: "プロンプト管理" },
+          { href: "/admin/users", label: "ユーザー管理" },
+        ]
+      : []),
   ];
 
   return (
@@ -40,7 +48,10 @@ export function Header() {
           </nav>
         </div>
         <div className="flex items-center gap-3 text-sm">
-          <span className="text-gray-600">{session.user.name}さん</span>
+          <span className="text-gray-600">
+            {session.user.name}さん
+            {isAdmin && <span className="ml-1 text-xs text-blue-600">(管理者)</span>}
+          </span>
           <button
             onClick={() => signOut({ callbackUrl: "/login" })}
             className="text-gray-500 hover:text-gray-700 underline"
