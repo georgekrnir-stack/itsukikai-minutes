@@ -76,9 +76,28 @@ function getSpeakerLabel(speakerId: string, mapping: Record<string, string> | nu
   return speakerId;
 }
 
+// 「。」の後に改行を挿入して読みやすくする（末尾の「。」は除く）
+function splitBySentence(text: string): string[] {
+  return text.split(/(?<=。)(?!$)/);
+}
+
+function TextWithLineBreaks({ children }: { children: string }) {
+  const sentences = splitBySentence(children);
+  return (
+    <>
+      {sentences.map((s, i) => (
+        <span key={i}>
+          {s}
+          {i < sentences.length - 1 && <br />}
+        </span>
+      ))}
+    </>
+  );
+}
+
 function HighlightedText({ text, changes }: { text: string; changes: CorrectedUtterance["changes"] }) {
   if (!changes || changes.length === 0) {
-    return <span>{text}</span>;
+    return <span><TextWithLineBreaks>{text}</TextWithLineBreaks></span>;
   }
 
   const parts: { text: string; change?: CorrectedUtterance["changes"][0] }[] = [];
@@ -94,7 +113,7 @@ function HighlightedText({ text, changes }: { text: string; changes: CorrectedUt
   }
   if (remaining) parts.push({ text: remaining });
 
-  if (parts.length === 0) return <span>{text}</span>;
+  if (parts.length === 0) return <span><TextWithLineBreaks>{text}</TextWithLineBreaks></span>;
 
   return (
     <span>
@@ -108,14 +127,14 @@ function HighlightedText({ text, changes }: { text: string; changes: CorrectedUt
               borderBottom: "2px dotted #D97706",
             }}
           >
-            {p.text}
+            <TextWithLineBreaks>{p.text}</TextWithLineBreaks>
             <span className="hidden group-hover/tip:block absolute bottom-full left-0 mb-1 px-3 py-2 bg-gray-800 text-white text-xs rounded shadow-lg whitespace-nowrap z-50">
               <span className="block">変更前: {p.change.original}</span>
               <span className="block text-gray-300">理由: {p.change.reason}</span>
             </span>
           </span>
         ) : (
-          <span key={i}>{p.text}</span>
+          <span key={i}><TextWithLineBreaks>{p.text}</TextWithLineBreaks></span>
         )
       )}
     </span>
