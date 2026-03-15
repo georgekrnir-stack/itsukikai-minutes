@@ -32,6 +32,41 @@ interface DiffOnlyResult {
   summary: string;
 }
 
+const BATCH_SIZE = 20;
+const MAX_RETRIES = 5;
+
+async function callWithRetry(
+  anthropic: Anthropic,
+  prompt: string,
+  transcriptionId: string,
+  batchLabel: string,
+): Promise<Anthropic.Message> {
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const message = await anthropic.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 16384,
+        messages: [{ role: "user", content: prompt }],
+      }, { timeout: 300000 });
+      return message;
+    } catch (error: unknown) {
+      const isRateLimit =
+        error instanceof Anthropic.RateLimitError ||
+        (error instanceof Error && "status" in error && (error as { status: number }).status === 429);
+
+      if (isRateLimit && attempt < MAX_RETRIES) {
+        // retry-afterヘッダーから待機時間を取得、なければ指数バックオフ
+        const waitMs = Math.min(2 ** attempt * 5000, 60000);
+        console.log(`[correct] ${transcriptionId}: ${batchLabel} rate limited (attempt ${attempt}/${MAX_RETRIES}), waiting ${waitMs}ms`);
+        await new Promise((r) => setTimeout(r, waitMs));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error("Max retries exceeded");
+}
+
 export async function correctTranscription(transcriptionId: string): Promise<void> {
   console.log(`[correct] ${transcriptionId}: Starting LLM correction`);
 
@@ -58,47 +93,75 @@ export async function correctTranscription(transcriptionId: string): Promise<voi
       apiKey: process.env.ANTHROPIC_API_KEY,
     });
 
-    const prompt = buildCorrectionPrompt(utterances, dictEntries);
+    // バッチ分割
+    const batches: { utterances: Utterance[]; startIndex: number }[] = [];
+    for (let i = 0; i < utterances.length; i += BATCH_SIZE) {
+      batches.push({
+        utterances: utterances.slice(i, i + BATCH_SIZE),
+        startIndex: i,
+      });
+    }
+    console.log(`[correct] ${transcriptionId}: Split into ${batches.length} batches, processing in parallel`);
 
     const startTime = Date.now();
-    const message = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 16384,
-      messages: [{ role: "user", content: prompt }],
-    }, { timeout: 600000 }); // 10分タイムアウト
+
+    // 全バッチを並列実行
+    const batchResults = await Promise.all(
+      batches.map(async (batch, batchIdx) => {
+        const batchLabel = `Batch ${batchIdx + 1}/${batches.length}`;
+        const prompt = buildCorrectionPrompt(batch.utterances, dictEntries, batch.startIndex);
+
+        console.log(`[correct] ${transcriptionId}: ${batchLabel} sending (index ${batch.startIndex}-${batch.startIndex + batch.utterances.length - 1})`);
+
+        const message = await callWithRetry(anthropic, prompt, transcriptionId, batchLabel);
+
+        console.log(`[correct] ${transcriptionId}: ${batchLabel} done, stop_reason=${message.stop_reason}, output_tokens=${message.usage.output_tokens}`);
+
+        const content = message.content[0];
+        if (content.type !== "text") {
+          throw new Error(`${batchLabel}: Unexpected response type`);
+        }
+
+        if (message.stop_reason === "max_tokens") {
+          console.error(`[correct] ${transcriptionId}: ${batchLabel} truncated (max_tokens)`);
+          throw new Error(`${batchLabel}: Response truncated`);
+        }
+
+        let jsonText = content.text.trim();
+        if (jsonText.startsWith("```")) {
+          jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+        }
+
+        let result: DiffOnlyResult;
+        try {
+          result = JSON.parse(jsonText);
+        } catch (parseErr) {
+          console.error(`[correct] ${transcriptionId}: ${batchLabel} JSON parse failed, length=${content.text.length}`);
+          console.error(`[correct] ${transcriptionId}: Last 200 chars: ${content.text.slice(-200)}`);
+          throw parseErr;
+        }
+
+        console.log(`[correct] ${transcriptionId}: ${batchLabel} parsed, ${result.total_changes} changes`);
+        return result;
+      })
+    );
 
     const elapsed = Date.now() - startTime;
-    console.log(`[correct] ${transcriptionId}: Claude API completed in ${elapsed}ms, stop_reason=${message.stop_reason}, output_tokens=${message.usage.output_tokens}`);
 
-    const content = message.content[0];
-    if (content.type !== "text") {
-      throw new Error("Unexpected response type");
+    // 全バッチの結果をマージ
+    const correctionMap = new Map<number, DiffOnlyResult["corrections"][0]>();
+    let totalChanges = 0;
+
+    for (const result of batchResults) {
+      totalChanges += result.total_changes;
+      for (const c of result.corrections) {
+        correctionMap.set(c.index, c);
+      }
     }
 
-    if (message.stop_reason === "max_tokens") {
-      console.error(`[correct] ${transcriptionId}: Response truncated (max_tokens)`);
-      throw new Error("Response truncated (max_tokens reached)");
-    }
+    console.log(`[correct] ${transcriptionId}: All ${batches.length} batches completed in ${elapsed}ms, total ${totalChanges} changes`);
 
-    let jsonText = content.text.trim();
-    if (jsonText.startsWith("```")) {
-      jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
-    }
-
-    let diffResult: DiffOnlyResult;
-    try {
-      diffResult = JSON.parse(jsonText);
-    } catch (parseErr) {
-      console.error(`[correct] ${transcriptionId}: JSON parse failed, length=${content.text.length}`);
-      console.error(`[correct] ${transcriptionId}: Last 200 chars: ${content.text.slice(-200)}`);
-      throw parseErr;
-    }
-
-    console.log(`[correct] ${transcriptionId}: ${diffResult.corrections.length} utterances corrected, ${diffResult.total_changes} total changes`);
-
-    // 差分から全utterances分のcorrectedUtterances配列を構築
-    const correctionMap = new Map(diffResult.corrections.map((c) => [c.index, c]));
-
+    // 全utterances分の配列を構築
     const allCorrected: CorrectedUtterance[] = utterances.map((u, i) => {
       const correction = correctionMap.get(i);
       if (correction) {
@@ -117,11 +180,13 @@ export async function correctTranscription(transcriptionId: string): Promise<voi
       };
     });
 
+    const summary = `${totalChanges}件の補正を行いました（${batches.length}バッチ並列処理, ${Math.round(elapsed / 1000)}秒）`;
+
     await prisma.transcription.update({
       where: { id: transcriptionId },
       data: {
         correctedUtterances: JSON.parse(JSON.stringify(allCorrected)),
-        correctionSummary: diffResult.summary,
+        correctionSummary: summary,
         status: "completed",
       },
     });
@@ -137,7 +202,7 @@ export async function correctTranscription(transcriptionId: string): Promise<voi
   }
 }
 
-function buildCorrectionPrompt(utterances: Utterance[], dictEntries: DictEntry[]): string {
+function buildCorrectionPrompt(utterances: Utterance[], dictEntries: DictEntry[], startIndex: number): string {
   let dictSection = "";
   if (dictEntries.length > 0) {
     dictSection = "## 修正辞書\n以下の誤表記→正しい表記の対応に従って修正してください:\n";
@@ -151,7 +216,7 @@ function buildCorrectionPrompt(utterances: Utterance[], dictEntries: DictEntry[]
   }
 
   const utteranceText = utterances
-    .map((u, i) => `index ${i} [${u.speaker_id || "unknown"}]: ${u.text}`)
+    .map((u, i) => `index ${startIndex + i} [${u.speaker_id || "unknown"}]: ${u.text}`)
     .join("\n");
 
   return `あなたは医療法人の会議文字起こしテキストの校正アシスタントです。
@@ -185,7 +250,7 @@ ${dictSection}
 {
   "corrections": [
     {
-      "index": 5,
+      "index": ${startIndex},
       "corrected_text": "（修正後のテキスト全文）",
       "changes": [
         {
