@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { LoadingSpinner } from "./components/LoadingSpinner";
 
 interface TranscriptionItem {
   id: string;
@@ -20,16 +21,17 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   uploading: { label: "アップロード中", color: "bg-blue-100 text-blue-800" },
   transcribing: { label: "文字起こし中", color: "bg-blue-100 text-blue-800" },
   correcting: { label: "清書中", color: "bg-yellow-100 text-yellow-800" },
+  analyzing: { label: "話者分析中", color: "bg-indigo-100 text-indigo-800" },
   error: { label: "エラー", color: "bg-red-100 text-red-800" },
 };
 
-const CATEGORY_ICONS: Record<string, string> = {
-  "経営会議": "🏢",
-  "委員会": "👥",
-  "プロジェクト": "📐",
-  "研修・教育": "📚",
-  "部門会議": "🏠",
-  "その他": "📋",
+const CATEGORY_COLORS: Record<string, string> = {
+  "経営会議": "border-blue-500",
+  "委員会": "border-emerald-500",
+  "プロジェクト": "border-amber-500",
+  "研修・教育": "border-purple-500",
+  "部門会議": "border-teal-500",
+  "その他": "border-gray-400",
 };
 
 function formatDate(dateStr: string): string {
@@ -99,7 +101,7 @@ export default function Dashboard() {
             />
             <button
               type="submit"
-              className="bg-gray-200 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-300"
+              className="border border-gray-300 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-50"
             >
               検索
             </button>
@@ -113,20 +115,20 @@ export default function Dashboard() {
             <option value="completed">完了</option>
             <option value="transcribing">処理中</option>
             <option value="correcting">清書中</option>
+            <option value="analyzing">話者分析中</option>
             <option value="error">エラー</option>
           </select>
         </div>
 
         {/* 一覧 */}
         {loading ? (
-          <p className="text-gray-500">読み込み中...</p>
+          <div className="py-8 flex justify-center">
+            <LoadingSpinner text="読み込み中..." />
+          </div>
         ) : items.length === 0 ? (
           <div className="text-center py-16 bg-white rounded-lg shadow">
             <p className="text-gray-500 mb-4">議事録がまだありません</p>
-            <a
-              href="/upload"
-              className="text-blue-600 hover:underline"
-            >
+            <a href="/upload" className="text-blue-600 hover:underline">
               新しい議事録を作成する
             </a>
           </div>
@@ -137,33 +139,25 @@ export default function Dashboard() {
                 label: item.status,
                 color: "bg-gray-100 text-gray-800",
               };
-              const icon = CATEGORY_ICONS[item.category || ""] || "📋";
+              const borderColor = CATEGORY_COLORS[item.category || ""] || "border-gray-300";
 
               return (
                 <div
                   key={item.id}
                   onClick={() => handleCardClick(item)}
-                  className="bg-white rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition-shadow"
+                  className={`bg-white rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition-shadow border-l-4 ${borderColor}`}
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold text-gray-900 truncate">
-                        {icon} {item.title}
-                      </h3>
+                      <h3 className="font-semibold text-gray-900 truncate">{item.title}</h3>
                       <div className="flex flex-wrap gap-3 mt-2 text-sm text-gray-500">
                         {item.category && (
-                          <span className="bg-gray-100 px-2 py-0.5 rounded text-xs">
-                            {item.category}
-                          </span>
+                          <span className="bg-gray-100 px-2 py-0.5 rounded text-xs">{item.category}</span>
                         )}
                         <span>{formatDate(item.createdAt)}</span>
-                        {item.speakerCount != null && (
-                          <span>話者{item.speakerCount}名</span>
-                        )}
+                        {item.speakerCount != null && <span>話者{item.speakerCount}名</span>}
                         {item.user && <span>{item.user.name}</span>}
-                        {item.hasMinutes && (
-                          <span className="text-green-600">議事録あり</span>
-                        )}
+                        {item.hasMinutes && <span className="text-green-600">議事録あり</span>}
                       </div>
                     </div>
                     <span
@@ -173,9 +167,7 @@ export default function Dashboard() {
                     </span>
                   </div>
                   {item.status === "error" && item.errorMessage && (
-                    <p className="text-sm text-red-500 mt-2 truncate">
-                      {item.errorMessage}
-                    </p>
+                    <p className="text-sm text-red-500 mt-2 truncate">{item.errorMessage}</p>
                   )}
                 </div>
               );

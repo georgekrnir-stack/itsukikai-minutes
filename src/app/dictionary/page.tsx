@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Modal, useModal } from "../components/Modal";
+import { LoadingSpinner } from "../components/LoadingSpinner";
 
 interface DictionaryEntry {
   id: string;
@@ -21,19 +23,19 @@ export default function DictionaryPage() {
   const [entries, setEntries] = useState<DictionaryEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // 新規追加フォーム
   const [newCorrect, setNewCorrect] = useState("");
   const [newIncorrect, setNewIncorrect] = useState("");
   const [newCategory, setNewCategory] = useState(CATEGORIES[0]);
   const [newKeyterm, setNewKeyterm] = useState(false);
   const [adding, setAdding] = useState(false);
 
-  // 編集中
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editCorrect, setEditCorrect] = useState("");
   const [editIncorrect, setEditIncorrect] = useState("");
   const [editCategory, setEditCategory] = useState("");
   const [editKeyterm, setEditKeyterm] = useState(false);
+
+  const { showConfirm, modalProps } = useModal();
 
   useEffect(() => {
     fetchEntries();
@@ -95,7 +97,8 @@ export default function DictionaryPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("本当に削除しますか？")) return;
+    const ok = await showConfirm("削除確認", "本当に削除しますか？", "danger");
+    if (!ok) return;
     const res = await fetch(`/api/dictionary/${id}`, { method: "DELETE" });
     if (res.ok) {
       await fetchEntries();
@@ -114,11 +117,7 @@ export default function DictionaryPage() {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 p-8">
-        <p>読み込み中...</p>
-      </div>
-    );
+    return <LoadingSpinner fullPage text="読み込み中..." />;
   }
 
   return (
@@ -177,9 +176,8 @@ export default function DictionaryPage() {
 
           <div className="text-xs text-gray-500 space-y-1 mt-4 border-t pt-3">
             <p>
-              Keyterm（ElevenLabsに送信）: 音声認識の段階で正しく拾いたい語句に有効にします。
-              例: 「守山いつき病院」「いつき会」など
-              ※ Keytermを有効にすると文字起こしコストが20%増加します
+              Keyterm（ElevenLabsに送信）: 音声認識の段階で正しく拾いたい語句に有効にします。 例:
+              「守山いつき病院」「いつき会」など ※ Keytermを有効にすると文字起こしコストが20%増加します
             </p>
             <p>
               LLM清書用: Keytermで拾えなかった場合に、議事録生成時にLLMが自動補正します。
@@ -193,21 +191,11 @@ export default function DictionaryPage() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b">
               <tr>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">
-                  正しい表記
-                </th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">
-                  誤認識パターン
-                </th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">
-                  カテゴリ
-                </th>
-                <th className="text-center px-4 py-3 font-medium text-gray-600">
-                  Keyterm
-                </th>
-                <th className="text-right px-4 py-3 font-medium text-gray-600">
-                  操作
-                </th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">正しい表記</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">誤認識パターン</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">カテゴリ</th>
+                <th className="text-center px-4 py-3 font-medium text-gray-600">Keyterm</th>
+                <th className="text-right px-4 py-3 font-medium text-gray-600">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -259,16 +247,10 @@ export default function DictionaryPage() {
                       />
                     </td>
                     <td className="px-4 py-2 text-right space-x-2">
-                      <button
-                        onClick={handleSaveEdit}
-                        className="text-blue-600 hover:underline text-sm"
-                      >
+                      <button onClick={handleSaveEdit} className="text-blue-600 hover:underline text-sm">
                         保存
                       </button>
-                      <button
-                        onClick={() => setEditingId(null)}
-                        className="text-gray-500 hover:underline text-sm"
-                      >
+                      <button onClick={() => setEditingId(null)} className="text-gray-500 hover:underline text-sm">
                         キャンセル
                       </button>
                     </td>
@@ -276,9 +258,7 @@ export default function DictionaryPage() {
                 ) : (
                   <tr key={entry.id} className="border-b hover:bg-gray-50">
                     <td className="px-4 py-3">{entry.correctTerm}</td>
-                    <td className="px-4 py-3 text-gray-600">
-                      {entry.incorrectTerm}
-                    </td>
+                    <td className="px-4 py-3 text-gray-600">{entry.incorrectTerm}</td>
                     <td className="px-4 py-3">
                       <span
                         className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
@@ -303,16 +283,10 @@ export default function DictionaryPage() {
                       </button>
                     </td>
                     <td className="px-4 py-3 text-right space-x-2">
-                      <button
-                        onClick={() => handleEdit(entry)}
-                        className="text-blue-600 hover:underline text-sm"
-                      >
+                      <button onClick={() => handleEdit(entry)} className="text-blue-600 hover:underline text-sm">
                         編集
                       </button>
-                      <button
-                        onClick={() => handleDelete(entry.id)}
-                        className="text-red-600 hover:underline text-sm"
-                      >
+                      <button onClick={() => handleDelete(entry.id)} className="text-red-600 hover:underline text-sm">
                         削除
                       </button>
                     </td>
@@ -323,6 +297,8 @@ export default function DictionaryPage() {
           </table>
         </div>
       </div>
+
+      <Modal {...modalProps} />
     </div>
   );
 }

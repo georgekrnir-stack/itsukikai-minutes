@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { FileDropZone } from "../components/FileDropZone";
+import { LoadingSpinner } from "../components/LoadingSpinner";
 
 const CATEGORIES = [
   "経営会議",
@@ -84,7 +86,9 @@ export default function UploadPage() {
               disabled={uploading}
             >
               {CATEGORIES.map((c) => (
-                <option key={c} value={c}>{c}</option>
+                <option key={c} value={c}>
+                  {c}
+                </option>
               ))}
             </select>
           </div>
@@ -93,23 +97,17 @@ export default function UploadPage() {
             <label className="block text-sm font-medium text-gray-700 mb-1">
               音声ファイル
             </label>
-            <input
-              type="file"
+            <FileDropZone
               accept=".m4a,.mp3,.wav,.aac,.ogg,.flac,.wma,.mp4,.webm"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              file={file}
+              onFileSelect={setFile}
               disabled={uploading}
             />
-            {file && (
-              <p className="text-sm text-gray-500 mt-1">
-                {file.name} ({(file.size / 1024 / 1024).toFixed(1)} MB)
-              </p>
-            )}
           </div>
 
           {uploading && (
-            <div className="flex items-center gap-3 py-2">
-              <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-              <span className="text-sm text-gray-600">アップロード中...</span>
+            <div className="py-2">
+              <LoadingSpinner text="アップロード中..." />
             </div>
           )}
 

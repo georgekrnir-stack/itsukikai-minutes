@@ -4,6 +4,8 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { DEFAULT_CORRECTION_PROMPT, DEFAULT_MINUTES_PROMPT } from "@/lib/prompt-defaults";
+import { Modal, useModal } from "../components/Modal";
+import { LoadingSpinner } from "../components/LoadingSpinner";
 
 interface PromptTemplate {
   id: string;
@@ -43,6 +45,8 @@ export default function PromptsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const { showConfirm, modalProps } = useModal();
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -88,9 +92,7 @@ export default function PromptsPage() {
       });
       if (!res.ok) throw new Error("Failed to save");
       const updated: PromptTemplate = await res.json();
-      setTemplates((prev) =>
-        prev.map((t) => (t.name === updated.name ? updated : t))
-      );
+      setTemplates((prev) => prev.map((t) => (t.name === updated.name ? updated : t)));
       setMessage({ type: "success", text: "保存しました" });
     } catch {
       setMessage({ type: "error", text: "保存に失敗しました" });
@@ -99,17 +101,14 @@ export default function PromptsPage() {
     }
   }
 
-  function handleReset() {
-    if (!confirm("デフォルトのプロンプトに戻しますか？")) return;
+  async function handleReset() {
+    const ok = await showConfirm("リセット確認", "デフォルトのプロンプトに戻しますか？");
+    if (!ok) return;
     setEditContent(DEFAULTS[activeTab]);
   }
 
   if (status === "loading" || loading) {
-    return (
-      <div className="mx-auto max-w-4xl px-4 py-8">
-        <p className="text-gray-500">読み込み中...</p>
-      </div>
-    );
+    return <LoadingSpinner fullPage text="読み込み中..." />;
   }
 
   if (!session?.user) return null;
@@ -190,11 +189,13 @@ export default function PromptsPage() {
         </button>
         <button
           onClick={handleReset}
-          className="px-6 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm font-medium border border-gray-300"
+          className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium"
         >
           デフォルトに戻す
         </button>
       </div>
+
+      <Modal {...modalProps} />
     </div>
   );
 }
