@@ -13,10 +13,7 @@ interface Utterance {
 }
 
 interface CorrectedUtterance {
-  index: number;
-  original_text: string;
   corrected_text: string;
-  changes: { original: string; corrected: string; reason: string }[];
 }
 
 function formatTimestamp(seconds: number): string {
@@ -52,66 +49,24 @@ export async function POST(
     return NextResponse.json({ error: "話者が2人未満のため分析できません" }, { status: 400 });
   }
 
-  // 各話者ごとの発言数をカウント
+  // 全文を時系列順で構築
+  let fullText = "## 会議の全文字起こし（時系列順）\n\n";
+  for (let i = 0; i < utterances.length; i++) {
+    const u = utterances[i];
+    const sid = u.speaker_id || "unknown";
+    const text = corrected[i] ? corrected[i].corrected_text : u.text;
+    fullText += `[${formatTimestamp(u.start)}] ${sid}: ${text}\n`;
+  }
+
+  // 話者ごとの発言数サマリ
   const speakerCounts: Record<string, number> = {};
   for (const u of utterances) {
     const sid = u.speaker_id || "unknown";
     speakerCounts[sid] = (speakerCounts[sid] || 0) + 1;
   }
-
-  // 各話者ごとに代表的な発言を抽出（最大8件、均等に分散）
-  const speakerSamples: Record<string, { time: string; text: string }[]> = {};
-  const speakerIndices: Record<string, number[]> = {};
-
-  for (let i = 0; i < utterances.length; i++) {
-    const sid = utterances[i].speaker_id || "unknown";
-    if (!speakerIndices[sid]) speakerIndices[sid] = [];
-    speakerIndices[sid].push(i);
-  }
-
-  const MAX_SAMPLES = 8;
+  let summaryText = "## 話者一覧\n\n";
   for (const sid of speakers) {
-    const indices = speakerIndices[sid] || [];
-    // 均等にサンプリング
-    const step = Math.max(1, Math.floor(indices.length / MAX_SAMPLES));
-    const selected: number[] = [];
-    for (let j = 0; j < indices.length && selected.length < MAX_SAMPLES; j += step) {
-      selected.push(indices[j]);
-    }
-    speakerSamples[sid] = selected.map((idx) => {
-      const u = utterances[idx];
-      const text = corrected[idx] ? corrected[idx].corrected_text : u.text;
-      return {
-        time: formatTimestamp(u.start),
-        text: text.length > 150 ? text.slice(0, 150) + "…" : text,
-      };
-    });
-  }
-
-  // 話者ごとサンプル
-  let samplesText = "## 各話者の発言サンプル\n\n";
-  for (const sid of speakers) {
-    const count = speakerCounts[sid] || 0;
-    const samples = speakerSamples[sid] || [];
-    samplesText += `[${sid}] (${count}件)\n`;
-    for (const s of samples) {
-      samplesText += `- [${s.time}] ${s.text}\n`;
-    }
-    samplesText += "\n";
-  }
-
-  // 会話の流れ（時系列順、最大60発言を均等サンプリング）
-  const MAX_FLOW = 60;
-  const flowStep = Math.max(1, Math.floor(utterances.length / MAX_FLOW));
-  let flowText = "## 会話の流れ（時系列順の抜粋）\n\n";
-  let flowCount = 0;
-  for (let i = 0; i < utterances.length && flowCount < MAX_FLOW; i += flowStep) {
-    const u = utterances[i];
-    const sid = u.speaker_id || "unknown";
-    const text = corrected[i] ? corrected[i].corrected_text : u.text;
-    const truncated = text.length > 80 ? text.slice(0, 80) + "…" : text;
-    flowText += `[${formatTimestamp(u.start)}] ${sid}: ${truncated}\n`;
-    flowCount++;
+    summaryText += `- ${sid}: ${speakerCounts[sid] || 0}件\n`;
   }
 
   const prompt = `あなたは会議の文字起こしデータを分析する専門家です。
@@ -120,8 +75,9 @@ export async function POST(
 
 以下のデータを分析してください:
 
-${samplesText}
-${flowText}
+${summaryText}
+
+${fullText}
 
 ## 分析指示
 
@@ -163,7 +119,7 @@ ${flowText}
       model: "claude-sonnet-4-20250514",
       max_tokens: 4096,
       messages: [{ role: "user", content: prompt }],
-    }, { timeout: 60000 });
+    }, { timeout: 120000 });
 
     const content = message.content[0];
     if (content.type !== "text") {

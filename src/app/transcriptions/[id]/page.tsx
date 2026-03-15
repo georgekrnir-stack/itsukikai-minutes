@@ -172,6 +172,7 @@ export default function TranscriptionPage() {
     nameSuggestions: Record<string, { name: string; reason: string }>;
     mergeGroups: { speakerIds: string[]; reason: string }[];
   } | null>(null);
+  const [mergeGroupPreview, setMergeGroupPreview] = useState<string | null>(null);
 
   // 話者発言プレビュー
   const [previewSpeaker, setPreviewSpeaker] = useState<string | null>(null);
@@ -662,11 +663,36 @@ export default function TranscriptionPage() {
                       <div className="flex items-center gap-2 flex-wrap mb-1">
                         {validIds.map((sid) => {
                           const color = getSpeakerColor(sid, speakers);
+                          const previewKey = `merge-${gi}-${sid}`;
                           return (
-                            <span key={sid} className="inline-flex items-center gap-1 text-sm bg-white border border-gray-200 rounded px-2 py-0.5">
-                              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color.border }} />
-                              {getSpeakerLabel(sid, speakerMapping)}
-                              <span className="text-gray-400 text-xs">({utteranceCounts[sid] || 0}件)</span>
+                            <span key={sid} className="inline-flex flex-col">
+                              <span className="inline-flex items-center gap-1 text-sm bg-white border border-gray-200 rounded px-2 py-0.5">
+                                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color.border }} />
+                                {getSpeakerLabel(sid, speakerMapping)}
+                                <button
+                                  onClick={() => setMergeGroupPreview(mergeGroupPreview === previewKey ? null : previewKey)}
+                                  className={`text-xs px-1 rounded cursor-pointer hover:bg-gray-100 ${
+                                    mergeGroupPreview === previewKey ? "text-blue-600" : "text-gray-400"
+                                  }`}
+                                >
+                                  {utteranceCounts[sid] || 0}件 {mergeGroupPreview === previewKey ? "▲" : "▼"}
+                                </button>
+                              </span>
+                              {mergeGroupPreview === previewKey && data?.utterances && (
+                                <div className="mt-1 border border-gray-200 rounded bg-white max-h-40 overflow-y-auto w-72">
+                                  {data.utterances.map((u, ui) => {
+                                    if ((u.speaker_id || "unknown") !== sid) return null;
+                                    const cu = corrected?.[ui];
+                                    const text = cu ? cu.corrected_text : u.text;
+                                    return (
+                                      <div key={ui} className="px-2 py-1 text-xs border-b border-gray-50 last:border-b-0">
+                                        <span className="text-gray-400 font-mono mr-1">[{formatTimestamp(u.start)}]</span>
+                                        <span className="text-gray-700">{text.length > 80 ? text.slice(0, 80) + "…" : text}</span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
                             </span>
                           );
                         })}
