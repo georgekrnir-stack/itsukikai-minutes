@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface Utterance {
   speaker_id: string | null;
@@ -940,7 +941,7 @@ export default function TranscriptionPage() {
                 </div>
               ) : (
                 <div className="bg-white rounded-lg shadow p-6 prose prose-sm max-w-none">
-                  <ReactMarkdown>{minutes.content}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{minutes.content}</ReactMarkdown>
                 </div>
               )}
             </div>
