@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/prisma";
+import { DEFAULT_CORRECTION_PROMPT } from "@/lib/prompt-defaults";
 
 interface DictEntry {
   correctTerm: string;
@@ -103,13 +104,16 @@ export async function correctTranscription(transcriptionId: string): Promise<voi
     }
     console.log(`[correct] ${transcriptionId}: Split into ${batches.length} batches, processing in parallel`);
 
+    // DBからテンプレートを1回だけ取得
+    const template = await getPromptTemplate();
+
     const startTime = Date.now();
 
     // 全バッチを並列実行
     const batchResults = await Promise.all(
       batches.map(async (batch, batchIdx) => {
         const batchLabel = `Batch ${batchIdx + 1}/${batches.length}`;
-        const prompt = buildCorrectionPrompt(batch.utterances, dictEntries, batch.startIndex);
+        const prompt = buildCorrectionPrompt(template, batch.utterances, dictEntries, batch.startIndex);
 
         console.log(`[correct] ${transcriptionId}: ${batchLabel} sending (index ${batch.startIndex}-${batch.startIndex + batch.utterances.length - 1})`);
 
@@ -202,7 +206,19 @@ export async function correctTranscription(transcriptionId: string): Promise<voi
   }
 }
 
-function buildCorrectionPrompt(utterances: Utterance[], dictEntries: DictEntry[], startIndex: number): string {
+async function getPromptTemplate(): Promise<string> {
+  try {
+    const record = await prisma.promptTemplate.findUnique({
+      where: { name: "correction" },
+    });
+    if (record) return record.content;
+  } catch (e) {
+    console.warn("[correct] Failed to load prompt template from DB, using default", e);
+  }
+  return DEFAULT_CORRECTION_PROMPT;
+}
+
+function buildCorrectionPrompt(template: string, utterances: Utterance[], dictEntries: DictEntry[], startIndex: number): string {
   let dictSection = "";
   if (dictEntries.length > 0) {
     dictSection = "## 修正辞書\n以下の誤表記→正しい表記の対応に従って修正してください:\n";
@@ -219,59 +235,7 @@ function buildCorrectionPrompt(utterances: Utterance[], dictEntries: DictEntry[]
     .map((u, i) => `index ${startIndex + i} [${u.speaker_id || "unknown"}]: ${u.text}`)
     .join("\n");
 
-  return `あなたは医療法人の会議文字起こしテキストの校正アシスタントです。
-以下の文字起こしテキストに含まれる誤りを積極的に修正してください。
-
-${dictSection}
-## 修正ルール
-
-### 必ず修正すべきもの
-- 辞書に載っている誤表記（完全一致でなくても、明らかに同じ語句を指しているものは修正する）
-- 明らかな誤変換（例:「感ごし」→「看護師」、「異常」→「以上」など文脈で判断できるもの）
-- 固有名詞の表記揺れ（人名、施設名、組織名の誤り）
-- 医療用語の誤変換（例:「じょくそう」→「褥瘡」、「かいご」→「介護」）
-- 送り仮名の明らかな誤り
-
-### 修正してはいけないもの
-- 発言の意味や意図を変えること
-- 話し言葉を書き言葉に直すこと（「〜っすね」→「〜ですね」のような変換はしない）
-- 文法的に正しくても意味が通る口語表現の修正
-- 発言者が実際に間違ったことを言っている場合の内容の補正
-
-### 判断が難しい場合
-- 迷った場合は修正する側に倒してください（消極的すぎるよりは積極的に補正する方が望ましい）
-- ただし、修正する場合は必ずchangesに記録してください
-
-## 出力フォーマット
-必ず以下のJSON形式のみで出力してください。JSON以外のテキストは含めないでください。
-
-**重要: 修正があったutteranceだけを出力してください。変更がないutteranceは含めないでください。**
-
-{
-  "corrections": [
-    {
-      "index": ${startIndex},
-      "corrected_text": "（修正後のテキスト全文）",
-      "changes": [
-        {
-          "original": "森山樹病院",
-          "corrected": "守山いつき病院",
-          "reason": "辞書: 施設名の補正"
-        }
-      ]
-    }
-  ],
-  "total_changes": 5,
-  "summary": "施設名3件、人名2件の補正を行いました"
-}
-
-## 注意
-- 修正が必要なutteranceのみをcorrectionsに含めてください
-- 変更がないutteranceは出力に含めないでください（出力を最小限に保つため）
-- indexはutterances配列のインデックスと一致させてください
-- corrected_textにはutterance全文を入れてください（修正箇所だけでなく全文）
-- 1つのutteranceに複数の修正がある場合は、changesに全て記録してください
-
-## 文字起こしデータ（utterances）
-${utteranceText}`;
+  return template
+    .replace("{{辞書セクション}}", dictSection)
+    .replace("{{utterancesテキスト}}", utteranceText);
 }
