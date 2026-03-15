@@ -166,6 +166,9 @@ export default function TranscriptionPage() {
   const [mergeSource, setMergeSource] = useState<string | null>(null);
   const [merging, setMerging] = useState(false);
 
+  // 話者発言プレビュー
+  const [previewSpeaker, setPreviewSpeaker] = useState<string | null>(null);
+
   // 再実行
   const [correcting, setCorrecting] = useState(false);
 
@@ -411,7 +414,15 @@ export default function TranscriptionPage() {
                     <div className="flex items-center gap-3">
                       <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: color.border }} />
                       <span className="text-sm text-gray-600 w-24 shrink-0">{speaker}</span>
-                      <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full shrink-0">{count}件</span>
+                      <button
+                        onClick={() => setPreviewSpeaker(previewSpeaker === speaker ? null : speaker)}
+                        className={`text-xs px-2 py-0.5 rounded-full shrink-0 cursor-pointer hover:bg-gray-200 transition-colors ${
+                          previewSpeaker === speaker ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-500"
+                        }`}
+                        title="発言を表示"
+                      >
+                        {count}件 {previewSpeaker === speaker ? "▲" : "▼"}
+                      </button>
                       <input
                         type="text"
                         value={speakerMapping[speaker] || ""}
@@ -454,6 +465,21 @@ export default function TranscriptionPage() {
                       >
                         キャンセル
                       </button>
+                    )}
+                    {previewSpeaker === speaker && data?.utterances && (
+                      <div className="ml-6 mt-1 border border-gray-200 rounded bg-gray-50 max-h-48 overflow-y-auto">
+                        {data.utterances.map((u, i) => {
+                          if ((u.speaker_id || "unknown") !== speaker) return null;
+                          const cu = corrected?.[i];
+                          const text = cu ? cu.corrected_text : u.text;
+                          return (
+                            <div key={i} className="px-3 py-1.5 text-xs border-b border-gray-100 last:border-b-0">
+                              <span className="text-gray-400 font-mono mr-2">[{formatTimestamp(u.start)}]</span>
+                              <span className="text-gray-700">{text.length > 80 ? text.slice(0, 80) + "…" : text}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     )}
                   </div>
                 );
