@@ -29,6 +29,7 @@ model CustomDictionary {
 model Transcription {
   id               String   @id @default(uuid())
   title            String
+  category         String?  // 経営会議, 委員会, プロジェクト, 研修・教育, 部門会議, その他
   status           String   @default("uploading") // uploading | transcribing | correcting | completed | error
   originalFilename String
   fileSize         Int      // バイト数

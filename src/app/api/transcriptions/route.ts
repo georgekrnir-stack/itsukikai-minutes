@@ -76,6 +76,57 @@ async function processTranscription(id: string, tempFilePath: string, keyterms?:
   }
 }
 
+// GET: 一覧取得
+export async function GET(request: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { searchParams } = new URL(request.url);
+  const search = searchParams.get("search") || "";
+  const status = searchParams.get("status") || "";
+
+  const where: Record<string, unknown> = {};
+  if (search) {
+    where.title = { contains: search, mode: "insensitive" };
+  }
+  if (status && status !== "all") {
+    where.status = status;
+  }
+
+  const transcriptions = await prisma.transcription.findMany({
+    where,
+    select: {
+      id: true,
+      title: true,
+      category: true,
+      status: true,
+      speakerCount: true,
+      createdAt: true,
+      errorMessage: true,
+      user: { select: { name: true } },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
+
+  // 議事録の存在チェック
+  const transcriptionIds = transcriptions.map((t) => t.id);
+  const minutesRecords = await prisma.minutes.findMany({
+    where: { transcriptionId: { in: transcriptionIds } },
+    select: { transcriptionId: true },
+  });
+  const minutesSet = new Set(minutesRecords.map((m) => m.transcriptionId));
+
+  const result = transcriptions.map((t) => ({
+    ...t,
+    hasMinutes: minutesSet.has(t.id),
+  }));
+
+  return NextResponse.json({ transcriptions: result });
+}
+
 export async function POST(request: NextRequest) {
   try {
     // 認証チェック
@@ -87,6 +138,7 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const file = formData.get("file");
     const title = formData.get("title") as string || "無題の会議";
+    const category = formData.get("category") as string || null;
     const useKeyterms = formData.get("useKeyterms") === "true";
 
     if (!file || !(file instanceof File)) {
@@ -99,6 +151,7 @@ export async function POST(request: NextRequest) {
     const transcription = await prisma.transcription.create({
       data: {
         title,
+        category,
         status: "uploading",
         originalFilename: file.name,
         fileSize: file.size,

@@ -1,120 +1,187 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-export default function Home() {
+interface TranscriptionItem {
+  id: string;
+  title: string;
+  category: string | null;
+  status: string;
+  speakerCount: number | null;
+  createdAt: string;
+  errorMessage: string | null;
+  user: { name: string } | null;
+  hasMinutes: boolean;
+}
+
+const STATUS_LABELS: Record<string, { label: string; color: string }> = {
+  completed: { label: "完了", color: "bg-green-100 text-green-800" },
+  uploading: { label: "アップロード中", color: "bg-blue-100 text-blue-800" },
+  transcribing: { label: "文字起こし中", color: "bg-blue-100 text-blue-800" },
+  correcting: { label: "清書中", color: "bg-yellow-100 text-yellow-800" },
+  error: { label: "エラー", color: "bg-red-100 text-red-800" },
+};
+
+const CATEGORY_ICONS: Record<string, string> = {
+  "経営会議": "🏢",
+  "委員会": "👥",
+  "プロジェクト": "📐",
+  "研修・教育": "📚",
+  "部門会議": "🏠",
+  "その他": "📋",
+};
+
+function formatDate(dateStr: string): string {
+  const d = new Date(dateStr);
+  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+}
+
+export default function Dashboard() {
   const router = useRouter();
-  const [file, setFile] = useState<File | null>(null);
-  const [title, setTitle] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const [useKeyterms, setUseKeyterms] = useState(false);
-  const [error, setError] = useState("");
+  const [items, setItems] = useState<TranscriptionItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
 
-  const handleSubmit = async () => {
-    if (!file) return;
+  const fetchList = async () => {
+    const params = new URLSearchParams();
+    if (search) params.set("search", search);
+    if (statusFilter !== "all") params.set("status", statusFilter);
+    const res = await fetch(`/api/transcriptions?${params}`);
+    if (res.ok) {
+      const data = await res.json();
+      setItems(data.transcriptions);
+    }
+    setLoading(false);
+  };
 
-    setUploading(true);
-    setError("");
+  useEffect(() => {
+    fetchList();
+  }, [statusFilter]);
 
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("title", title || "無題の会議");
-      if (useKeyterms) {
-        formData.append("useKeyterms", "true");
-      }
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    fetchList();
+  };
 
-      const response = await fetch("/api/transcriptions", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || `HTTP ${response.status}`);
-      }
-
-      router.push(`/transcriptions/${data.id}/status`);
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Unknown error occurred";
-      setError(message);
-      setUploading(false);
+  const handleCardClick = (item: TranscriptionItem) => {
+    if (item.status === "completed" || item.status === "error") {
+      router.push(`/transcriptions/${item.id}`);
+    } else {
+      router.push(`/transcriptions/${item.id}/status`);
     }
   };
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
-      <div className="mx-auto max-w-2xl">
-        <h1 className="text-2xl font-bold mb-6">文字起こし</h1>
+      <div className="mx-auto max-w-4xl">
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold">ダッシュボード</h1>
+          <a
+            href="/upload"
+            className="bg-blue-600 text-white px-5 py-2.5 rounded-lg hover:bg-blue-700 font-medium"
+          >
+            + 新しい議事録を作成
+          </a>
+        </div>
 
-        <div className="bg-white rounded-lg shadow p-6 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              会議タイトル
-            </label>
+        {/* 検索・フィルタ */}
+        <div className="flex gap-4 mb-6">
+          <form onSubmit={handleSearch} className="flex-1 flex gap-2">
             <input
               type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="例: 2024年3月 経営会議"
-              className="w-full border border-gray-300 rounded px-3 py-2"
-              disabled={uploading}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="タイトルで検索..."
+              className="flex-1 border border-gray-300 rounded px-3 py-2 text-sm"
             />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              音声ファイル
-            </label>
-            <input
-              type="file"
-              accept=".m4a,.mp3,.wav,.aac,.ogg,.flac,.wma,.mp4,.webm"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              disabled={uploading}
-            />
-            {file && (
-              <p className="text-sm text-gray-500 mt-1">
-                {file.name} ({(file.size / 1024 / 1024).toFixed(1)} MB)
-              </p>
-            )}
-          </div>
-
-          <div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={useKeyterms}
-                onChange={(e) => setUseKeyterms(e.target.checked)}
-                disabled={uploading}
-                className="w-4 h-4"
-              />
-              <span className="text-sm text-gray-700">
-                Keyterm Promptingを使用する（固有名詞の認識精度が向上しますが、コストが20%増加します）
-              </span>
-            </label>
-          </div>
-
-          {/* アップロード中スピナー */}
-          {uploading && (
-            <div className="flex items-center gap-3 py-2">
-              <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-              <span className="text-sm text-gray-600">アップロード中...</span>
-            </div>
-          )}
-
-          <button
-            onClick={handleSubmit}
-            disabled={!file || uploading}
-            className="w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+            <button
+              type="submit"
+              className="bg-gray-200 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-300"
+            >
+              検索
+            </button>
+          </form>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="border border-gray-300 rounded px-3 py-2 text-sm"
           >
-            {uploading ? "アップロード中..." : "文字起こし開始"}
-          </button>
-
-          {error && <p className="text-red-600 text-sm">エラー: {error}</p>}
+            <option value="all">すべて</option>
+            <option value="completed">完了</option>
+            <option value="transcribing">処理中</option>
+            <option value="correcting">清書中</option>
+            <option value="error">エラー</option>
+          </select>
         </div>
+
+        {/* 一覧 */}
+        {loading ? (
+          <p className="text-gray-500">読み込み中...</p>
+        ) : items.length === 0 ? (
+          <div className="text-center py-16 bg-white rounded-lg shadow">
+            <p className="text-gray-500 mb-4">議事録がまだありません</p>
+            <a
+              href="/upload"
+              className="text-blue-600 hover:underline"
+            >
+              新しい議事録を作成する
+            </a>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {items.map((item) => {
+              const statusInfo = STATUS_LABELS[item.status] || {
+                label: item.status,
+                color: "bg-gray-100 text-gray-800",
+              };
+              const icon = CATEGORY_ICONS[item.category || ""] || "📋";
+
+              return (
+                <div
+                  key={item.id}
+                  onClick={() => handleCardClick(item)}
+                  className="bg-white rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition-shadow"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-semibold text-gray-900 truncate">
+                        {icon} {item.title}
+                      </h3>
+                      <div className="flex flex-wrap gap-3 mt-2 text-sm text-gray-500">
+                        {item.category && (
+                          <span className="bg-gray-100 px-2 py-0.5 rounded text-xs">
+                            {item.category}
+                          </span>
+                        )}
+                        <span>{formatDate(item.createdAt)}</span>
+                        {item.speakerCount != null && (
+                          <span>話者{item.speakerCount}名</span>
+                        )}
+                        {item.user && <span>{item.user.name}</span>}
+                        {item.hasMinutes && (
+                          <span className="text-green-600">議事録あり</span>
+                        )}
+                      </div>
+                    </div>
+                    <span
+                      className={`shrink-0 ml-3 px-2.5 py-1 rounded-full text-xs font-medium ${statusInfo.color}`}
+                    >
+                      {statusInfo.label}
+                    </span>
+                  </div>
+                  {item.status === "error" && item.errorMessage && (
+                    <p className="text-sm text-red-500 mt-2 truncate">
+                      {item.errorMessage}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

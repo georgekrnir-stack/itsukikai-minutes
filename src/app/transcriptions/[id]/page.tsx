@@ -22,6 +22,7 @@ interface CorrectedUtterance {
 interface TranscriptionData {
   id: string;
   title: string;
+  category: string | null;
   status: string;
   originalFilename: string;
   fileSize: number;
@@ -34,6 +35,7 @@ interface TranscriptionData {
   speakerMapping: Record<string, string> | null;
   correctedUtterances: CorrectedUtterance[] | null;
   correctionSummary: string | null;
+  errorMessage: string | null;
   processingTimeMs: number | null;
   createdAt: string;
 }
@@ -74,13 +76,11 @@ function getSpeakerLabel(speakerId: string, mapping: Record<string, string> | nu
   return speakerId;
 }
 
-// テキスト中の変更箇所をハイライト付きで表示
 function HighlightedText({ text, changes }: { text: string; changes: CorrectedUtterance["changes"] }) {
   if (!changes || changes.length === 0) {
     return <span>{text}</span>;
   }
 
-  // 変更箇所を見つけてハイライト
   const parts: { text: string; change?: CorrectedUtterance["changes"][0] }[] = [];
   let remaining = text;
 
@@ -94,7 +94,6 @@ function HighlightedText({ text, changes }: { text: string; changes: CorrectedUt
   }
   if (remaining) parts.push({ text: remaining });
 
-  // パーツが生成できなかった場合はそのまま表示
   if (parts.length === 0) return <span>{text}</span>;
 
   return (
@@ -141,8 +140,11 @@ export default function TranscriptionPage() {
   const [editingMinutes, setEditingMinutes] = useState(false);
   const [minutesEditText, setMinutesEditText] = useState("");
 
-  useEffect(() => {
-    Promise.all([
+  // 再実行
+  const [correcting, setCorrecting] = useState(false);
+
+  const fetchData = () => {
+    return Promise.all([
       fetch(`/api/transcriptions/${id}`).then((r) => r.json()),
       fetch(`/api/transcriptions/${id}/minutes`).then((r) =>
         r.ok ? r.json() : null
@@ -154,8 +156,11 @@ export default function TranscriptionPage() {
         if (d.speakerMapping) setSpeakerMapping(d.speakerMapping);
         if (m) setMinutes(m);
       })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      .catch((err) => setError(err.message));
+  };
+
+  useEffect(() => {
+    fetchData().finally(() => setLoading(false));
   }, [id]);
 
   const handleSaveMapping = async () => {
@@ -169,7 +174,6 @@ export default function TranscriptionPage() {
       });
       if (!res.ok) throw new Error("保存に失敗しました");
       setData((prev) => (prev ? { ...prev, speakerMapping } : prev));
-      // 議事録が存在する場合、更新された内容を再取得
       const minutesRes = await fetch(`/api/transcriptions/${id}/minutes`);
       if (minutesRes.ok) {
         const updatedMinutes = await minutesRes.json();
@@ -198,7 +202,45 @@ export default function TranscriptionPage() {
     setEditingIndex(null);
   };
 
+  // 清書やり直し
+  const handleReCorrect = async () => {
+    if (!confirm("清書をやり直します。現在の清書結果は上書きされます。よろしいですか？")) return;
+    setCorrecting(true);
+    try {
+      const res = await fetch(`/api/transcriptions/${id}/correct`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("清書の再実行に失敗しました");
+
+      // ポーリングで完了を待つ
+      const poll = async () => {
+        for (let i = 0; i < 120; i++) {
+          await new Promise((r) => setTimeout(r, 3000));
+          const statusRes = await fetch(`/api/transcriptions/${id}/status`);
+          if (statusRes.ok) {
+            const statusData = await statusRes.json();
+            if (statusData.status === "completed" || statusData.status === "error") {
+              break;
+            }
+          }
+        }
+      };
+      await poll();
+      await fetchData();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "もう一度お試しください");
+    } finally {
+      setCorrecting(false);
+    }
+  };
+
   const handleGenerateMinutes = async () => {
+    if (minutes) {
+      const msg = minutes.isEdited
+        ? "手動で編集した内容が失われます。議事録を再生成してよろしいですか？"
+        : "現在の議事録が上書きされます。よろしいですか？";
+      if (!confirm(msg)) return;
+    }
     setGeneratingMinutes(true);
     try {
       const res = await fetch(`/api/transcriptions/${id}/minutes`, {
@@ -208,12 +250,12 @@ export default function TranscriptionPage() {
       });
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error || "生成に失敗しました");
+        throw new Error(err.error || "議事録の生成に失敗しました。もう一度お試しください。");
       }
       const m = await res.json();
       setMinutes(m);
     } catch (err) {
-      alert(err instanceof Error ? err.message : "エラー");
+      alert(err instanceof Error ? err.message : "議事録の生成に失敗しました。もう一度お試しください。");
     } finally {
       setGeneratingMinutes(false);
     }
@@ -257,26 +299,44 @@ export default function TranscriptionPage() {
     return (
       <div className="min-h-screen bg-gray-50 p-8">
         <p className="text-red-600">エラー: {error || "データが見つかりません"}</p>
-        <a href="/" className="text-blue-600 hover:underline mt-2 inline-block">トップに戻る</a>
+        <a href="/" className="text-blue-600 hover:underline mt-2 inline-block">ダッシュボードに戻る</a>
       </div>
     );
   }
 
   const speakers = data.speakers || [];
   const corrected = data.correctedUtterances;
+  const correctionFailed = data.correctionSummary === "清書処理でエラーが発生しました";
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="mx-auto max-w-4xl">
+        {/* ダッシュボードに戻る */}
+        <a href="/" className="text-blue-600 hover:underline text-sm mb-4 inline-block">
+          &larr; ダッシュボードに戻る
+        </a>
+
         <h1 className="text-2xl font-bold mb-2">{data.title}</h1>
 
         {/* メタ情報 */}
         <div className="flex flex-wrap gap-4 text-sm text-gray-500 mb-6">
+          {data.category && (
+            <span className="bg-gray-100 px-2 py-0.5 rounded">{data.category}</span>
+          )}
+          <span>{new Date(data.createdAt).toLocaleDateString("ja-JP")}</span>
           <span>話者数: {data.speakerCount ?? "-"}</span>
           <span>発言数: {data.utteranceCount ?? "-"}</span>
           {data.durationSeconds && <span>音声時間: {formatTimestamp(data.durationSeconds)}</span>}
           {data.processingTimeMs && <span>処理時間: {(data.processingTimeMs / 1000).toFixed(1)}秒</span>}
         </div>
+
+        {/* エラー表示 */}
+        {data.status === "error" && data.errorMessage && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+            <p className="text-red-800 font-medium">エラーが発生しました</p>
+            <p className="text-red-600 text-sm mt-1">{data.errorMessage}</p>
+          </div>
+        )}
 
         {/* 話者マッピング */}
         {speakers.length > 0 && (
@@ -309,9 +369,10 @@ export default function TranscriptionPage() {
           </div>
         )}
 
-        {/* 清書サマリー + 切替ボタン */}
+        {/* 清書セクションヘッダ */}
         <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold">文字起こし結果</h2>
             {corrected && (
               <button
                 onClick={() => setShowOriginal(!showOriginal)}
@@ -323,10 +384,34 @@ export default function TranscriptionPage() {
               </button>
             )}
           </div>
-          {data.correctionSummary && (
-            <span className="text-sm text-gray-500">{data.correctionSummary}</span>
-          )}
+          <div className="flex items-center gap-3">
+            {data.correctionSummary && !correctionFailed && (
+              <span className="text-sm text-gray-500">{data.correctionSummary}</span>
+            )}
+            <button
+              onClick={handleReCorrect}
+              disabled={correcting}
+              className="text-sm border border-blue-300 text-blue-700 px-3 py-1 rounded hover:bg-blue-50 disabled:opacity-50"
+            >
+              {correcting ? "清書中..." : "清書をやり直す"}
+            </button>
+          </div>
         </div>
+
+        {/* 清書エラー通知 */}
+        {correctionFailed && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-3 text-sm text-yellow-800">
+            清書処理でエラーが発生しました。原文のまま表示しています。「清書をやり直す」で再試行できます。
+          </div>
+        )}
+
+        {/* 清書中ローディング */}
+        {correcting && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-3 flex items-center gap-3">
+            <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm text-blue-700">清書中...（通常30秒〜1分程度）</span>
+          </div>
+        )}
 
         {/* Utterances */}
         <div className="bg-white rounded-lg shadow p-6 space-y-2">
@@ -389,7 +474,7 @@ export default function TranscriptionPage() {
           )}
         </div>
 
-        {/* 議事録生成セクション */}
+        {/* 議事録セクション */}
         <div className="mt-8 border-t pt-8">
           {!minutes && !generatingMinutes && (
             <div className="text-center">
@@ -402,7 +487,6 @@ export default function TranscriptionPage() {
               <p className="text-sm text-gray-500 mt-3">
                 この議事録はAIが自動生成します。
                 内容の正確性を必ず確認し、必要に応じて編集してからご利用ください。
-                元の文字起こしデータは上部で確認できます。
               </p>
             </div>
           )}
@@ -431,17 +515,21 @@ export default function TranscriptionPage() {
                         onClick={handleDownloadMinutes}
                         className="text-sm border border-gray-300 px-3 py-1 rounded hover:bg-gray-50"
                       >
-                        ダウンロード
+                        テキストでダウンロード
                       </button>
                       <button
                         onClick={handleGenerateMinutes}
                         className="text-sm border border-orange-300 text-orange-700 px-3 py-1 rounded hover:bg-orange-50"
                       >
-                        再生成する
+                        議事録を再生成する
                       </button>
                     </>
                   )}
                 </div>
+              </div>
+
+              <div className="bg-yellow-50 border border-yellow-200 rounded p-3 text-sm text-yellow-800 mb-4">
+                この議事録はAIが自動生成したものです。内容の正確性をご確認ください。
               </div>
 
               {editingMinutes ? (
@@ -464,10 +552,6 @@ export default function TranscriptionPage() {
               )}
             </div>
           )}
-        </div>
-
-        <div className="mt-6">
-          <a href="/" className="text-blue-600 hover:underline">新しい文字起こしを作成</a>
         </div>
       </div>
     </div>
