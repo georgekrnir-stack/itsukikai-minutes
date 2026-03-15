@@ -162,6 +162,10 @@ export default function TranscriptionPage() {
   const [editingMinutes, setEditingMinutes] = useState(false);
   const [minutesEditText, setMinutesEditText] = useState("");
 
+  // マージ
+  const [mergeSource, setMergeSource] = useState<string | null>(null);
+  const [merging, setMerging] = useState(false);
+
   // 再実行
   const [correcting, setCorrecting] = useState(false);
 
@@ -184,6 +188,40 @@ export default function TranscriptionPage() {
   useEffect(() => {
     fetchData().finally(() => setLoading(false));
   }, [id]);
+
+  // 話者ごとの発言件数を計算
+  const utteranceCounts: Record<string, number> = {};
+  if (data?.utterances) {
+    for (const u of data.utterances) {
+      const sid = u.speaker_id || "unknown";
+      utteranceCounts[sid] = (utteranceCounts[sid] || 0) + 1;
+    }
+  }
+
+  const handleMergeSpeakers = async (sourceSpeakerId: string, targetSpeakerId: string) => {
+    const sourceLabel = getSpeakerLabel(sourceSpeakerId, speakerMapping);
+    const targetLabel = getSpeakerLabel(targetSpeakerId, speakerMapping);
+    const count = utteranceCounts[sourceSpeakerId] || 0;
+    if (!confirm(`${sourceLabel}の${count}件の発言を${targetLabel}に統合します。この操作は元に戻せません。`)) return;
+
+    setMerging(true);
+    try {
+      const res = await fetch(`/api/transcriptions/${id}/merge-speakers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetSpeakerId, mergeSpeakerIds: [sourceSpeakerId] }),
+      });
+      if (!res.ok) throw new Error("マージに失敗しました");
+      const updated = await res.json();
+      setData(updated);
+      if (updated.speakerMapping) setSpeakerMapping(updated.speakerMapping);
+      setMergeSource(null);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "マージエラー");
+    } finally {
+      setMerging(false);
+    }
+  };
 
   const handleSaveMapping = async () => {
     setSavingMapping(true);
@@ -367,21 +405,84 @@ export default function TranscriptionPage() {
             <div className="space-y-3">
               {speakers.map((speaker) => {
                 const color = getSpeakerColor(speaker, speakers);
+                const count = utteranceCounts[speaker] || 0;
                 return (
-                  <div key={speaker} className="flex items-center gap-3">
-                    <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: color.border }} />
-                    <span className="text-sm text-gray-600 w-24 shrink-0">{speaker}</span>
-                    <input
-                      type="text"
-                      value={speakerMapping[speaker] || ""}
-                      onChange={(e) => setSpeakerMapping((prev) => ({ ...prev, [speaker]: e.target.value }))}
-                      placeholder="名前を入力"
-                      className="border border-gray-300 rounded px-3 py-1.5 text-sm flex-1"
-                    />
+                  <div key={speaker} className="space-y-1">
+                    <div className="flex items-center gap-3">
+                      <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: color.border }} />
+                      <span className="text-sm text-gray-600 w-24 shrink-0">{speaker}</span>
+                      <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full shrink-0">{count}件</span>
+                      <input
+                        type="text"
+                        value={speakerMapping[speaker] || ""}
+                        onChange={(e) => setSpeakerMapping((prev) => ({ ...prev, [speaker]: e.target.value }))}
+                        placeholder="名前を入力"
+                        className="border border-gray-300 rounded px-3 py-1.5 text-sm flex-1"
+                      />
+                      {speakers.length > 1 && (
+                        mergeSource === speaker ? (
+                          <select
+                            className="border border-gray-300 rounded px-2 py-1.5 text-sm"
+                            value=""
+                            onChange={(e) => {
+                              if (e.target.value) handleMergeSpeakers(speaker, e.target.value);
+                            }}
+                            disabled={merging}
+                          >
+                            <option value="">統合先を選択...</option>
+                            {speakers.filter((s) => s !== speaker).map((s) => (
+                              <option key={s} value={s}>
+                                {getSpeakerLabel(s, speakerMapping)} ({utteranceCounts[s] || 0}件)
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <button
+                            onClick={() => setMergeSource(mergeSource === speaker ? null : speaker)}
+                            disabled={merging}
+                            className="text-sm border border-gray-300 text-gray-600 px-2 py-1 rounded hover:bg-gray-50 disabled:opacity-50 shrink-0"
+                          >
+                            マージ
+                          </button>
+                        )
+                      )}
+                    </div>
+                    {mergeSource === speaker && (
+                      <button
+                        onClick={() => setMergeSource(null)}
+                        className="text-xs text-gray-400 hover:text-gray-600 ml-10"
+                      >
+                        キャンセル
+                      </button>
+                    )}
                   </div>
                 );
               })}
             </div>
+
+            {/* 同名検出ヒント */}
+            {(() => {
+              const nameMap: Record<string, string[]> = {};
+              for (const s of speakers) {
+                const name = speakerMapping[s]?.trim();
+                if (name) {
+                  if (!nameMap[name]) nameMap[name] = [];
+                  nameMap[name].push(s);
+                }
+              }
+              const dupes = Object.entries(nameMap).filter(([, ids]) => ids.length > 1);
+              if (dupes.length === 0) return null;
+              return (
+                <div className="mt-3 space-y-2">
+                  {dupes.map(([name, ids]) => (
+                    <div key={name} className="bg-yellow-50 border border-yellow-200 rounded p-2 text-sm text-yellow-800">
+                      同じ名前「{name}」の話者が{ids.length}人います。マージしますか？
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
             <div className="mt-4 flex items-center gap-3">
               <button onClick={handleSaveMapping} disabled={savingMapping} className="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
                 {savingMapping ? "保存中..." : "名前を保存する"}
