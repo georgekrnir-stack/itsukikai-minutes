@@ -52,27 +52,44 @@ export async function POST(
     return NextResponse.json({ error: "話者が2人未満のため分析できません" }, { status: 400 });
   }
 
-  // 各話者ごとに代表的な発言を抽出（最大5件）
-  const speakerSamples: Record<string, { time: string; text: string }[]> = {};
+  // 各話者ごとの発言数をカウント
   const speakerCounts: Record<string, number> = {};
-
-  for (let i = 0; i < utterances.length; i++) {
-    const u = utterances[i];
+  for (const u of utterances) {
     const sid = u.speaker_id || "unknown";
     speakerCounts[sid] = (speakerCounts[sid] || 0) + 1;
-
-    if (!speakerSamples[sid]) speakerSamples[sid] = [];
-    if (speakerSamples[sid].length < 5) {
-      const text = corrected[i] ? corrected[i].corrected_text : u.text;
-      speakerSamples[sid].push({
-        time: formatTimestamp(u.start),
-        text: text.length > 100 ? text.slice(0, 100) + "…" : text,
-      });
-    }
   }
 
-  // プロンプト構築
-  let samplesText = "各話者の発言サンプル:\n\n";
+  // 各話者ごとに代表的な発言を抽出（最大8件、均等に分散）
+  const speakerSamples: Record<string, { time: string; text: string }[]> = {};
+  const speakerIndices: Record<string, number[]> = {};
+
+  for (let i = 0; i < utterances.length; i++) {
+    const sid = utterances[i].speaker_id || "unknown";
+    if (!speakerIndices[sid]) speakerIndices[sid] = [];
+    speakerIndices[sid].push(i);
+  }
+
+  const MAX_SAMPLES = 8;
+  for (const sid of speakers) {
+    const indices = speakerIndices[sid] || [];
+    // 均等にサンプリング
+    const step = Math.max(1, Math.floor(indices.length / MAX_SAMPLES));
+    const selected: number[] = [];
+    for (let j = 0; j < indices.length && selected.length < MAX_SAMPLES; j += step) {
+      selected.push(indices[j]);
+    }
+    speakerSamples[sid] = selected.map((idx) => {
+      const u = utterances[idx];
+      const text = corrected[idx] ? corrected[idx].corrected_text : u.text;
+      return {
+        time: formatTimestamp(u.start),
+        text: text.length > 150 ? text.slice(0, 150) + "…" : text,
+      };
+    });
+  }
+
+  // 話者ごとサンプル
+  let samplesText = "## 各話者の発言サンプル\n\n";
   for (const sid of speakers) {
     const count = speakerCounts[sid] || 0;
     const samples = speakerSamples[sid] || [];
@@ -83,15 +100,41 @@ export async function POST(
     samplesText += "\n";
   }
 
+  // 会話の流れ（時系列順、最大60発言を均等サンプリング）
+  const MAX_FLOW = 60;
+  const flowStep = Math.max(1, Math.floor(utterances.length / MAX_FLOW));
+  let flowText = "## 会話の流れ（時系列順の抜粋）\n\n";
+  let flowCount = 0;
+  for (let i = 0; i < utterances.length && flowCount < MAX_FLOW; i += flowStep) {
+    const u = utterances[i];
+    const sid = u.speaker_id || "unknown";
+    const text = corrected[i] ? corrected[i].corrected_text : u.text;
+    const truncated = text.length > 80 ? text.slice(0, 80) + "…" : text;
+    flowText += `[${formatTimestamp(u.start)}] ${sid}: ${truncated}\n`;
+    flowCount++;
+  }
+
   const prompt = `あなたは会議の文字起こしデータを分析する専門家です。
-以下は音声文字起こしの各話者の発言サンプルです。音声認識により、同一人物が複数のspeaker_idに分かれている可能性があります。
+音声認識の仕組み上、同一人物が複数のspeaker_idに分かれてしまうことがよくあります。
+特に発言数が少ないspeaker_id（1〜5件程度）は、別の話者のフラグメント（断片）である可能性が高いです。
+
+以下のデータを分析してください:
 
 ${samplesText}
+${flowText}
 
-以下の2点を分析してください:
+## 分析指示
 
-1. **名前推定**: 発言内容から各話者の名前や役割を推定してください。確信度が低い場合は「?」をつけてください。
-2. **マージ候補**: 同一人物と思われるspeaker_idのグループを特定してください。発言の文脈、話し方の特徴、会話の流れから判断してください。確信が持てないものは含めないでください。
+### 1. 名前推定
+発言内容から各話者の名前や役割を推定してください。確信度が低い場合は「?」をつけてください。
+
+### 2. マージ候補（重要）
+同一人物と思われるspeaker_idのグループを特定してください。以下の観点で積極的に判断してください:
+- **発言数が少ない話者**（1〜5件）は、発言数が多い別の話者の断片である可能性が非常に高い
+- **会話の流れ**で、あるspeaker_idの発言の直前・直後に別のspeaker_idが同じ文脈で話している場合
+- **話題・語彙・話し方**が似ている話者
+- **発言のタイミング**が近接している（同じ時間帯に交互に出現する）話者
+- 音声認識は完璧ではないため、**可能性がある場合は積極的に提案**してください（ユーザーが最終判断します）
 
 以下のJSON形式で回答してください（JSON以外は出力しないでください）:
 {
@@ -107,8 +150,9 @@ ${samplesText}
 
 注意:
 - nameSuggestionsには全話者を含めてください
-- mergeGroupsは確信がある場合のみ含めてください。なければ空配列で構いません
-- 各mergeGroupのspeakerIdsは2つ以上含めてください`;
+- mergeGroupsは可能性がある限り積極的に提案してください（ユーザーが確認して判断します）
+- 各mergeGroupのspeakerIdsは2つ以上含めてください
+- 発言数が極端に少ない話者は、他の話者へのマージ候補として特に注目してください`;
 
   try {
     const anthropic = new Anthropic({
