@@ -35,7 +35,7 @@ function buildPromptText(
       const speakerLabel = speakerMapping?.[u.speaker_id || ""] || u.speaker_id || "unknown";
       const timestamp = formatTimestamp(u.start);
       const text = correctedUtterances?.[i]?.corrected_text || u.text;
-      return `[${timestamp}] ${speakerLabel}:\n${text}`;
+      return `[#${i}][${timestamp}] ${speakerLabel}:\n${text}`;
     })
     .join("\n\n");
 }
@@ -122,8 +122,8 @@ export async function POST(
 
     const startTime = Date.now();
     const message = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 8192,
+      model: "claude-opus-4-20250514",
+      max_tokens: 16384,
       messages: [{ role: "user", content: prompt }],
     });
     const elapsed = Date.now() - startTime;

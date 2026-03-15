@@ -96,6 +96,121 @@ function TextWithLineBreaks({ children }: { children: string }) {
   );
 }
 
+// 議事録の [[refs:0,1,5]] を折りたたみUIに変換するコンポーネント
+function RefCollapsible({
+  indices,
+  utterances,
+  correctedUtterances,
+  speakerMapping,
+  speakers,
+}: {
+  indices: number[];
+  utterances: Utterance[];
+  correctedUtterances: CorrectedUtterance[] | null;
+  speakerMapping: Record<string, string> | null;
+  speakers: string[];
+}) {
+  const [open, setOpen] = useState(false);
+  const validIndices = indices.filter((i) => i >= 0 && i < utterances.length);
+  if (validIndices.length === 0) return null;
+
+  return (
+    <span className="inline-block align-top">
+      <button
+        onClick={() => setOpen(!open)}
+        className="text-xs text-blue-600 hover:text-blue-800 hover:underline ml-1 cursor-pointer"
+      >
+        {open ? "▼根拠" : "▶根拠"}
+      </button>
+      {open && (
+        <div className="mt-1 mb-2 border border-gray-200 rounded-md bg-gray-50 overflow-hidden text-sm">
+          {validIndices.map((idx) => {
+            const u = utterances[idx];
+            const speakerId = u.speaker_id || "unknown";
+            const color = getSpeakerColor(speakerId, speakers);
+            const label = speakerMapping?.[speakerId] || speakerId;
+            const cu = correctedUtterances?.[idx];
+            const text = cu ? cu.corrected_text : u.text;
+            return (
+              <div
+                key={idx}
+                className="px-3 py-2 border-b border-gray-100 last:border-b-0"
+                style={{ borderLeft: `3px solid ${color.border}` }}
+              >
+                <span className="text-xs text-gray-400 font-mono mr-2">
+                  [{formatTimestamp(u.start)}]
+                </span>
+                <span className="text-xs font-semibold mr-2" style={{ color: color.text }}>
+                  {label}:
+                </span>
+                <span className="text-gray-700">{text}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </span>
+  );
+}
+
+function MinutesWithRefs({
+  content,
+  utterances,
+  correctedUtterances,
+  speakerMapping,
+  speakers,
+}: {
+  content: string;
+  utterances: Utterance[];
+  correctedUtterances: CorrectedUtterance[] | null;
+  speakerMapping: Record<string, string> | null;
+  speakers: string[];
+}) {
+  // [[refs:0,1,5]] パターンでcontentを分割
+  const refPattern = /\[\[refs:([\d,]+)\]\]/g;
+  const segments: { type: "text" | "refs"; value: string; indices?: number[] }[] = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = refPattern.exec(content)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({ type: "text", value: content.slice(lastIndex, match.index) });
+    }
+    const indices = match[1].split(",").map(Number);
+    segments.push({ type: "refs", value: match[0], indices });
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < content.length) {
+    segments.push({ type: "text", value: content.slice(lastIndex) });
+  }
+
+  // refsが1つもなければ通常のReactMarkdown
+  if (segments.every((s) => s.type === "text")) {
+    return <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>;
+  }
+
+  return (
+    <>
+      {segments.map((seg, i) =>
+        seg.type === "refs" ? (
+          <RefCollapsible
+            key={i}
+            indices={seg.indices!}
+            utterances={utterances}
+            correctedUtterances={correctedUtterances}
+            speakerMapping={speakerMapping}
+            speakers={speakers}
+          />
+        ) : (
+          <ReactMarkdown key={i} remarkPlugins={[remarkGfm]}>
+            {seg.value}
+          </ReactMarkdown>
+        )
+      )}
+    </>
+  );
+}
+
 function HighlightedText({ text, changes }: { text: string; changes: CorrectedUtterance["changes"] }) {
   if (!changes || changes.length === 0) {
     return <span><TextWithLineBreaks>{text}</TextWithLineBreaks></span>;
@@ -475,7 +590,9 @@ export default function TranscriptionPage() {
     if (!minutes || !data) return;
     const footer =
       "\n\n---\n\nこの議事録はAIにより自動生成されたものです。内容の正確性をご確認の上ご利用ください。";
-    const blob = new Blob([minutes.content + footer], { type: "text/markdown" });
+    // ダウンロード時は [[refs:...]] を除去
+    const cleanContent = minutes.content.replace(/\s*\[\[refs:[\d,]+\]\]/g, "");
+    const blob = new Blob([cleanContent + footer], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -941,7 +1058,13 @@ export default function TranscriptionPage() {
                 </div>
               ) : (
                 <div className="bg-white rounded-lg shadow p-6 prose prose-sm max-w-none">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{minutes.content}</ReactMarkdown>
+                  <MinutesWithRefs
+                    content={minutes.content}
+                    utterances={data.utterances || []}
+                    correctedUtterances={data.correctedUtterances || null}
+                    speakerMapping={data.speakerMapping || null}
+                    speakers={speakers}
+                  />
                 </div>
               )}
             </div>
