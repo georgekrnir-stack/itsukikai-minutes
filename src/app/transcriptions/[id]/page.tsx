@@ -212,10 +212,10 @@ export default function TranscriptionPage() {
       });
       if (!res.ok) throw new Error("清書の再実行に失敗しました");
 
-      // ポーリングで完了を待つ
+      // ポーリングで完了を待つ（最大15分）
       const poll = async () => {
-        for (let i = 0; i < 120; i++) {
-          await new Promise((r) => setTimeout(r, 3000));
+        for (let i = 0; i < 180; i++) {
+          await new Promise((r) => setTimeout(r, 5000));
           const statusRes = await fetch(`/api/transcriptions/${id}/status`);
           if (statusRes.ok) {
             const statusData = await statusRes.json();

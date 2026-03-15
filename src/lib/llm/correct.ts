@@ -28,7 +28,7 @@ interface CorrectionResult {
   summary: string;
 }
 
-const BATCH_SIZE = 50;
+const BATCH_SIZE = 30;
 
 export async function correctTranscription(transcriptionId: string): Promise<void> {
   console.log(`[correct] ${transcriptionId}: Starting LLM correction`);
@@ -76,9 +76,9 @@ export async function correctTranscription(transcriptionId: string): Promise<voi
 
       const message = await anthropic.messages.create({
         model: "claude-sonnet-4-20250514",
-        max_tokens: 16384,
+        max_tokens: 8192,
         messages: [{ role: "user", content: prompt }],
-      });
+      }, { timeout: 180000 }); // 3分タイムアウト
 
       const content = message.content[0];
       if (content.type !== "text") {
