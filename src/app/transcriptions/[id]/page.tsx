@@ -83,12 +83,12 @@ function splitBySentence(text: string): string[] {
 
 function TextWithLineBreaks({ children }: { children: string }) {
   const sentences = splitBySentence(children);
+  if (sentences.length <= 1) return <>{children}</>;
   return (
     <>
       {sentences.map((s, i) => (
-        <span key={i}>
+        <span key={i} className={i < sentences.length - 1 ? "block mb-1.5" : ""}>
           {s}
-          {i < sentences.length - 1 && <br />}
         </span>
       ))}
     </>
