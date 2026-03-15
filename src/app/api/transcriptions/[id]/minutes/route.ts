@@ -40,7 +40,10 @@ function buildPromptText(
     .join("\n\n");
 }
 
-// GET: 議事録取得
+// 生成中フラグ（プロセス内）
+const generatingSet = new Set<string>();
+
+// GET: 議事録取得（ポーリング対応）
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -56,14 +59,16 @@ export async function GET(
     where: { transcriptionId: id },
   });
 
+  const generating = generatingSet.has(id);
+
   if (!minutes) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json({ status: generating ? "generating" : "none" });
   }
 
-  return NextResponse.json(minutes);
+  return NextResponse.json({ ...minutes, status: generating ? "generating" : "ready" });
 }
 
-// POST: 議事録生成
+// POST: 議事録生成（非同期：即座に202を返し、バックグラウンドで生成）
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -74,7 +79,10 @@ export async function POST(
   }
 
   const { id } = await params;
-  console.log(`[minutes] ${id}: Starting minutes generation`);
+
+  if (generatingSet.has(id)) {
+    return NextResponse.json({ status: "generating" }, { status: 202 });
+  }
 
   const transcription = await prisma.transcription.findUnique({
     where: { id },
@@ -84,44 +92,59 @@ export async function POST(
     return NextResponse.json({ error: "Transcription not found" }, { status: 404 });
   }
 
-  const utterances = transcription.utterances as unknown as Utterance[];
-  const correctedUtterances = transcription.correctedUtterances as unknown as CorrectedUtterance[] | null;
-  const speakerMapping = transcription.speakerMapping as Record<string, string> | null;
-  const useCorrected = !!correctedUtterances;
-  console.log(`[minutes] ${id}: Using corrected text: ${useCorrected}`);
+  // バックグラウンドで生成開始
+  generatingSet.add(id);
+  console.log(`[minutes] ${id}: Starting minutes generation (async)`);
 
-  const conversationText = buildPromptText(utterances, correctedUtterances, speakerMapping);
+  generateMinutesBackground(id, transcription).catch((error) => {
+    console.error(`[minutes] ${id}: Background generation error -`, error);
+  });
 
-  const speakerNames = speakerMapping
-    ? Object.values(speakerMapping).filter((n) => n.trim())
-    : [];
-  const participantsText = speakerNames.length > 0
-    ? speakerNames.join("、")
-    : "（話者マッピング未設定）";
+  return NextResponse.json({ status: "generating" }, { status: 202 });
+}
 
-  // DBからテンプレートを取得（なければデフォルト使用）
-  let template = DEFAULT_MINUTES_PROMPT;
+// バックグラウンド生成処理
+async function generateMinutesBackground(
+  id: string,
+  transcription: { title: string; utterances: unknown; correctedUtterances: unknown; speakerMapping: unknown }
+) {
   try {
-    const record = await prisma.promptTemplate.findUnique({
-      where: { name: "minutes" },
-    });
-    if (record) template = record.content;
-  } catch (e) {
-    console.warn(`[minutes] ${id}: Failed to load prompt template from DB, using default`, e);
-  }
+    const utterances = transcription.utterances as unknown as Utterance[];
+    const correctedUtterances = transcription.correctedUtterances as unknown as CorrectedUtterance[] | null;
+    const speakerMapping = transcription.speakerMapping as Record<string, string> | null;
+    const useCorrected = !!correctedUtterances;
+    console.log(`[minutes] ${id}: Using corrected text: ${useCorrected}`);
 
-  const prompt = template
-    .replace("{{会議タイトル}}", transcription.title)
-    .replace("{{参加者一覧}}", participantsText)
-    .replace("{{会議テキスト}}", conversationText);
+    const conversationText = buildPromptText(utterances, correctedUtterances, speakerMapping);
 
-  try {
+    const speakerNames = speakerMapping
+      ? Object.values(speakerMapping).filter((n) => n.trim())
+      : [];
+    const participantsText = speakerNames.length > 0
+      ? speakerNames.join("、")
+      : "（話者マッピング未設定）";
+
+    // DBからテンプレートを取得（なければデフォルト使用）
+    let template = DEFAULT_MINUTES_PROMPT;
+    try {
+      const record = await prisma.promptTemplate.findUnique({
+        where: { name: "minutes" },
+      });
+      if (record) template = record.content;
+    } catch (e) {
+      console.warn(`[minutes] ${id}: Failed to load prompt template from DB, using default`, e);
+    }
+
+    const prompt = template
+      .replace("{{会議タイトル}}", transcription.title)
+      .replace("{{参加者一覧}}", participantsText)
+      .replace("{{会議テキスト}}", conversationText);
+
     const anthropic = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
     });
 
     const startTime = Date.now();
-    // Opusは応答が長くかかるためストリーミングを使用
     const stream = anthropic.messages.stream({
       model: "claude-opus-4-20250514",
       max_tokens: 16384,
@@ -136,8 +159,7 @@ export async function POST(
       throw new Error("Unexpected response type");
     }
 
-    // DB保存（upsertで既存があれば上書き）
-    const minutes = await prisma.minutes.upsert({
+    await prisma.minutes.upsert({
       where: { transcriptionId: id },
       update: {
         content: content.text,
@@ -149,11 +171,9 @@ export async function POST(
       },
     });
 
-    return NextResponse.json(minutes);
-  } catch (error) {
-    console.error(`[minutes] ${id}: Error -`, error);
-    const message = error instanceof Error ? error.message : "Unknown error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.log(`[minutes] ${id}: Minutes saved to DB`);
+  } finally {
+    generatingSet.delete(id);
   }
 }
 

@@ -307,7 +307,7 @@ export default function TranscriptionPage() {
         if (d.error) throw new Error(d.error);
         setData(d);
         if (d.speakerMapping) setSpeakerMapping(d.speakerMapping);
-        if (m) setMinutes(m);
+        if (m && m.id) setMinutes(m);
       })
       .catch((err) => setError(err.message));
   };
@@ -555,17 +555,35 @@ export default function TranscriptionPage() {
     }
     setGeneratingMinutes(true);
     try {
+      // POST → 202で即座に返る（バックグラウンド生成開始）
       const res = await fetch(`/api/transcriptions/${id}/minutes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}",
       });
-      if (!res.ok) {
+      if (!res.ok && res.status !== 202) {
         const err = await res.json();
         throw new Error(err.error || "議事録の生成に失敗しました。もう一度お試しください。");
       }
-      const m = await res.json();
-      setMinutes(m);
+
+      // ポーリングで完了を待つ（最大5分）
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 5000));
+        try {
+          const pollRes = await fetch(`/api/transcriptions/${id}/minutes`);
+          if (pollRes.ok) {
+            const pollData = await pollRes.json();
+            if (pollData.status === "ready" && pollData.id) {
+              setMinutes(pollData);
+              return;
+            }
+            // まだ生成中ならポーリング継続
+          }
+        } catch {
+          // ネットワークエラーは無視してリトライ
+        }
+      }
+      throw new Error("議事録の生成がタイムアウトしました。ページを再読み込みしてください。");
     } catch (err) {
       alert(err instanceof Error ? err.message : "議事録の生成に失敗しました。もう一度お試しください。");
     } finally {
