@@ -121,11 +121,13 @@ export async function POST(
     });
 
     const startTime = Date.now();
-    const message = await anthropic.messages.create({
+    // Opusは応答が長くかかるためストリーミングを使用
+    const stream = anthropic.messages.stream({
       model: "claude-opus-4-20250514",
       max_tokens: 16384,
       messages: [{ role: "user", content: prompt }],
     });
+    const message = await stream.finalMessage();
     const elapsed = Date.now() - startTime;
     console.log(`[minutes] ${id}: Claude API completed in ${elapsed}ms`);
 
