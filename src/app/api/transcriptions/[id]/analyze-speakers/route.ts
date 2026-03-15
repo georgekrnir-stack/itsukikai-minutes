@@ -133,6 +133,12 @@ ${fullText}
 
     const result = JSON.parse(jsonText);
 
+    // 結果をDBにも保存
+    await prisma.transcription.update({
+      where: { id },
+      data: { speakerSuggestions: result },
+    });
+
     return NextResponse.json(result);
   } catch (error) {
     console.error(`[analyze-speakers] ${id}: Error -`, error);

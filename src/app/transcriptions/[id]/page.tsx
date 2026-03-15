@@ -36,6 +36,10 @@ interface TranscriptionData {
   speakerMapping: Record<string, string> | null;
   correctedUtterances: CorrectedUtterance[] | null;
   correctionSummary: string | null;
+  speakerSuggestions: {
+    nameSuggestions: Record<string, { name: string; reason: string }>;
+    mergeGroups: { speakerIds: string[]; reason: string }[];
+  } | null;
   errorMessage: string | null;
   processingTimeMs: number | null;
   createdAt: string;
@@ -307,6 +311,7 @@ export default function TranscriptionPage() {
         if (d.error) throw new Error(d.error);
         setData(d);
         if (d.speakerMapping) setSpeakerMapping(d.speakerMapping);
+        if (d.speakerSuggestions) setSuggestions(d.speakerSuggestions);
         if (m && m.id) setMinutes(m);
       })
       .catch((err) => setError(err.message));

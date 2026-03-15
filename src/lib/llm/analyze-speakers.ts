@@ -20,7 +20,7 @@ function formatTimestamp(seconds: number): string {
 }
 
 /**
- * AI話者分析を実行し、名前設定・マージを自動適用してDB保存する。
+ * AI話者分析を実行し、提案結果をDBに保存する（適用はしない）。
  * 話者が2人未満の場合はスキップ。
  */
 export async function analyzeSpeakers(transcriptionId: string): Promise<void> {
@@ -43,7 +43,7 @@ export async function analyzeSpeakers(transcriptionId: string): Promise<void> {
 
     const utterances = (transcription.utterances as unknown as Utterance[]) || [];
     const corrected = (transcription.correctedUtterances as unknown as CorrectedUtterance[]) || [];
-    let speakers = (transcription.speakers as string[]) || [];
+    const speakers = (transcription.speakers as string[]) || [];
 
     if (speakers.length < 2) {
       console.log(`[analyze] ${transcriptionId}: Only ${speakers.length} speaker(s), skipping`);
@@ -96,7 +96,7 @@ ${fullText}
 - **会話の流れ**で、あるspeaker_idの発言の直前・直後に別のspeaker_idが同じ文脈で話している場合
 - **話題・語彙・話し方**が似ている話者
 - **発言のタイミング**が近接している（同じ時間帯に交互に出現する）話者
-- 音声認識は完璧ではないため、**可能性がある場合は積極的に提案**してください（ユーザーが最終判断します）
+- 音声認識は完璧ではないため、**可能性がある場合は積極的に提案**してください（ユーザーが確認して判断します）
 
 以下のJSON形式で回答してください（JSON以外は出力しないでください）:
 {
@@ -139,89 +139,17 @@ ${fullText}
       jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
     }
 
-    const result = JSON.parse(jsonText) as {
-      nameSuggestions: Record<string, { name: string; reason: string }>;
-      mergeGroups: { speakerIds: string[]; reason: string }[];
-    };
+    const result = JSON.parse(jsonText);
 
-    // 1. 名前を適用
-    const speakerMapping: Record<string, string> = {};
-    for (const [sid, info] of Object.entries(result.nameSuggestions)) {
-      if (speakers.includes(sid)) {
-        speakerMapping[sid] = info.name;
-      }
-    }
-    console.log(`[analyze] ${transcriptionId}: Applied ${Object.keys(speakerMapping).length} name suggestions`);
-
-    // speakerMappingを先に保存
+    // 提案結果をDBに保存（適用はしない。ユーザーが詳細ページで確認・適用する）
     await prisma.transcription.update({
       where: { id: transcriptionId },
-      data: { speakerMapping: speakerMapping as Record<string, string> },
+      data: {
+        speakerSuggestions: result,
+      },
     });
 
-    // 2. マージを実行
-    let currentUtterances = utterances;
-    let mergeCount = 0;
-
-    for (const group of result.mergeGroups) {
-      // 現在のspeakersリストを再取得（前のマージで変わっている可能性）
-      const currentTranscription = await prisma.transcription.findUnique({
-        where: { id: transcriptionId },
-      });
-      if (!currentTranscription) break;
-
-      speakers = (currentTranscription.speakers as string[]) || [];
-      currentUtterances = (currentTranscription.utterances as unknown as Utterance[]) || [];
-
-      const validIds = group.speakerIds.filter((sid) => speakers.includes(sid));
-      if (validIds.length < 2) continue;
-
-      // 発言数最多をtargetに
-      let targetId = validIds[0];
-      let maxCount = speakerCounts[targetId] || 0;
-      for (const sid of validIds) {
-        if ((speakerCounts[sid] || 0) > maxCount) {
-          maxCount = speakerCounts[sid] || 0;
-          targetId = sid;
-        }
-      }
-      const mergeIds = validIds.filter((sid) => sid !== targetId);
-      const mergeSet = new Set(mergeIds);
-
-      // utterancesのspeaker_idを書き換え
-      const updatedUtterances = currentUtterances.map((u) => {
-        if (u.speaker_id && mergeSet.has(u.speaker_id)) {
-          return { ...u, speaker_id: targetId };
-        }
-        return u;
-      });
-
-      // speakersからマージ済みを除去
-      const updatedSpeakers = speakers.filter((s) => !mergeSet.has(s));
-
-      // speakerMappingからマージ済みを除去
-      const currentMapping = (currentTranscription.speakerMapping as Record<string, string>) || {};
-      const updatedMapping = { ...currentMapping };
-      for (const mid of mergeIds) {
-        delete updatedMapping[mid];
-      }
-
-      await prisma.transcription.update({
-        where: { id: transcriptionId },
-        data: {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          utterances: updatedUtterances as any,
-          speakers: updatedSpeakers as any,
-          speakerMapping: updatedMapping as any,
-          speakerCount: updatedSpeakers.length,
-        },
-      });
-
-      mergeCount++;
-      console.log(`[analyze] ${transcriptionId}: Merged ${mergeIds.join(",")} → ${targetId}`);
-    }
-
-    console.log(`[analyze] ${transcriptionId}: Completed (${mergeCount} merges applied)`);
+    console.log(`[analyze] ${transcriptionId}: Suggestions saved (${Object.keys(result.nameSuggestions || {}).length} names, ${(result.mergeGroups || []).length} merge groups)`);
   } catch (error) {
     console.error(`[analyze] ${transcriptionId}: Error -`, error);
     // 分析エラーは致命的ではないのでログのみ
